@@ -1,0 +1,157 @@
+{
+  "theme": "light",
+  "persona": "Swiss Brutalist + High-Contrast",
+  "emotion": "Empowerment, Rebellion, Transparency, Authority",
+  "typography": {
+    "headings": {
+      "family": "'Cabinet Grotesk', sans-serif",
+      "import_url": "https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@800,500,700,900&display=swap",
+      "rules": "Never use Inter for headings. Ensure tight letter spacing (tracking-tighter) and heavy weights (font-black or font-extrabold) for massive impact."
+    },
+    "body": {
+      "family": "'Satoshi', sans-serif",
+      "import_url": "https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&display=swap",
+      "rules": "Clean, neutral, and readable. Use leading-relaxed for long form text."
+    }
+  },
+  "colors": {
+    "background": "#FAFAFA",
+    "surface": "#FFFFFF",
+    "text_primary": "#0A0A0A",
+    "text_secondary": "#525252",
+    "accent_primary": "#FF4F00",
+    "accent_hover": "#E04600",
+    "border": "#E5E5E5",
+    "premium_gold": "#FFD700"
+  },
+  "layouts": {
+    "spacing_scale": "Use generous padding: p-8, p-12, p-16, p-24.",
+    "container": "Max width 7xl with mx-auto and px-6 md:px-12 padding.",
+    "grid_system": "Bento Grid Protocol. Asymmetrical, high visual tension. Avoid standard equal-width columns where possible."
+  },
+  "motion": {
+    "hover": "Harsh, immediate transitions. -translate-y-1, sharp box-shadow additions (e.g., solid 4px black shadow on hover).",
+    "entrance": "Staggered fade-up using framer-motion. Keep it quick (0.4s) to match the Brutalist vibe."
+  },
+  "visual_enhancers": {
+    "borders": "1px or 2px solid #0A0A0A borders around cards to create a 'blueprint' or 'architectural' feel.",
+    "shadows": "Hard, solid shadows (e.g., shadow-[4px_4px_0px_0px_rgba(10,10,10,1)]) instead of soft diffuse shadows.",
+    "textures": "Subtle noise overlay on the hero section background to kill digital flatness."
+  },
+  "components_strategy": {
+    "buttons": "Sharp corners (rounded-none) or very slight radius (rounded-sm). High contrast. Primary CTA should be the accent color (#FF4F00) with white text, or solid black with white text. Hover states should invert or add a hard shadow.",
+    "cards": "Flat surfaces with 1px black borders. No soft shadows. Padding inside should be generous (p-8).",
+    "navigation": "Sticky top, solid white background with a 1px bottom border. Z-index 50."
+  },
+  "sections": [
+    {
+      "name": "Header",
+      "content": "Logo on left (Marketo). Links on right: 'Login', 'Become a Seller' (Solid Button).",
+      "rules": "Solid background (bg-white). Do not use transparent over hero."
+    },
+    {
+      "name": "Hero",
+      "layout": "Grid cols-1 lg:grid-cols-12 gap-8 items-center min-h-[80vh]",
+      "content": {
+        "headline": "Zero Commission. 100% Yours.",
+        "subheadline": "Open your shop, share your link, and get paid directly to your Razorpay account. No hidden fees. No holding periods.",
+        "cta": "Start Selling",
+        "secondary_text": "marketo.com/your-name"
+      },
+      "style": "Massive headline (text-6xl md:text-8xl+), tracking-tighter, font-black. Left-aligned content spanning 7 columns. Right 5 columns can feature an overlapping collage of the artisan and packing images."
+    },
+    {
+      "name": "How It Works (Bento Grid)",
+      "layout": "3-column CSS Grid or dynamic Bento format.",
+      "content": {
+        "step_1": { "title": "1. Create your shop", "desc": "Claim your URL and set up in minutes.", "image": "artisan_working" },
+        "step_2": { "title": "2. List products", "desc": "Add digital or physical items.", "image": "packing_order" },
+        "step_3": { "title": "3. Share & Get Paid", "desc": "Money goes straight to you.", "image": "mobile_payment" }
+      },
+      "style": "Cards with hard 1px borders. Use the provided images in a cropped, high-contrast style."
+    },
+    {
+      "name": "Why Marketo",
+      "layout": "Grid col-1 md:grid-cols-2 lg:grid-cols-4 gap-6.",
+      "features": [
+        { "title": "0% Commission", "desc": "We don't touch your money." },
+        { "title": "Direct Payments", "desc": "Instant transfers via Razorpay." },
+        { "title": "Free to Start", "desc": "Zero upfront costs." },
+        { "title": "Custom Link", "desc": "marketo.com/{slug}" }
+      ],
+      "style": "Stark typography. Heavy use of the accent color for the '0%'."
+    },
+    {
+      "name": "Pricing Teaser",
+      "layout": "3-card flex or grid.",
+      "content": {
+        "free": { "title": "Free", "price": "₹0", "desc": "With Ads", "features": ["Unlimited listings", "0% commission", "Standard support"] },
+        "monthly": { "title": "Premium", "price": "₹149/mo", "desc": "Ad-Free", "features": ["Ad-free shop", "Custom analytics", "Priority support"] },
+        "yearly": { "title": "Pro", "price": "₹999/yr", "desc": "Best Value", "features": ["Everything in Premium", "2 months free", "Pro badge"] }
+      },
+      "style": "Highlight the Yearly plan with a stark inverted scheme (black card, white text) or the accent color."
+    },
+    {
+      "name": "Social Proof",
+      "layout": "3 placeholder testimonial cards.",
+      "content": "Greyed out placeholder cards with 'Testimonial coming soon' and placeholder stats (e.g., '₹10M+ earned by sellers').",
+      "style": "Opacity 50%, muted grayscale to indicate placeholder status while maintaining the grid."
+    },
+    {
+      "name": "Footer",
+      "layout": "Massive typography 'Build Your Empire.', flex row for links.",
+      "content": "Links: About, Terms, Privacy, Contact. Copyright.",
+      "style": "Dark background (bg-neutral-900) with white text to contrast the rest of the page. Huge text at the top of the footer."
+    }
+  ],
+  "image_urls": {
+    "packing_order": {
+      "url": "https://images.unsplash.com/photo-1449247666642-264389f5f5b1?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDV8MHwxfHNlYXJjaHwxfHxwZXJzb24lMjBwYWNraW5nJTIwc21hbGwlMjBidXNpbmVzcyUyMG9yZGVyfGVufDB8fHx8MTc4NzgwNzY1NHww&ixlib=rb-4.1.0&q=85",
+      "description": "Person packing a small business order",
+      "placement": "How it Works - Step 2 or Hero collage"
+    },
+    "artisan_working": {
+      "url": "https://images.unsplash.com/photo-1740710543611-80b658171bc3?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1Mjh8MHwxfHNlYXJjaHwyfHxhcnRpc2FuJTIwd29ya2luZyUyMHN0dWRpb3xlbnwwfHx8fDE3ODc4MDc2NTR8MA&ixlib=rb-4.1.0&q=85",
+      "description": "Artisan studio",
+      "placement": "How it Works - Step 1 or Hero collage"
+    },
+    "mobile_payment": {
+      "url": "https://images.unsplash.com/photo-1509017174183-0b7e0278f1ec?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNTl8MHwxfHNlYXJjaHwxfHxtb2JpbGUlMjBwYXltZW50JTIwaG9sZGluZyUyMHBob25lfGVufDB8fHx8MTc4NzgwNzY2Mnww&ixlib=rb-4.1.0&q=85",
+      "description": "Mobile payment success",
+      "placement": "How it Works - Step 3"
+    },
+    "modern_retail": {
+      "url": "https://images.unsplash.com/photo-1759050486852-fdfe2fdc7bea?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1Mjh8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjByZXRhaWwlMjBtaW5pbWFsfGVufDB8fHx8MTc4NzgwNzY1NHww&ixlib=rb-4.1.0&q=85",
+      "description": "Clean, minimal modern retail environment",
+      "placement": "Optional background or premium teaser"
+    }
+  },
+  "accessibility": {
+    "contrast": "Strict APCA/WCAG AA adherence. Black text on white/grey backgrounds, white on black/accent.",
+    "aria": "All buttons and links must have aria-labels.",
+    "testing": "All interactive elements MUST include a data-testid attribute (e.g., data-testid='hero-start-selling-btn')."
+  },
+  "seo": {
+    "meta": "Include robust title '<title>Marketo | Zero Commission Marketplace</title>' and meta description.",
+    "schema": "Implement Schema.org Organization and WebSite JSON-LD in the Head.",
+    "semantics": "Ensure rigid h1, h2, h3 structure. H1 strictly for the Hero."
+  },
+  "instructions_to_main_agent": [
+    "Load 'Cabinet Grotesk' and 'Satoshi' fonts via the provided fontshare URLs in the root CSS/HTML.",
+    "Use Lucide-React or Phosphor Icons for UI iconography.",
+    "Build standard React (.js or .jsx) components, not .tsx.",
+    "Do NOT center-align all text; adhere strictly to optical alignment, mostly left-aligned for tension.",
+    "Implement the layout with pure HTML/Tailwind for marketing sections (do not rely on rigid Shadcn Cards for creative bento layouts).",
+    "Create stub routes or distinct sections for About, Terms, Privacy, Contact as requested by the footer.",
+    "Preserve the 'visit a shop by slug' logic or ensure it's easily accessible in the route structure."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "Do not use generic centered layouts or simplistic gradients.",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Do not apply 'transition: all' globally. Use targeted transitions (e.g., transition-colors, transition-transform).",
+    "Never use AI assistant Emoji characters (🤖🧠💡).",
+    "Every interaction needs micro-animations (hover states, focus states).",
+    "Use 2-3x more spacing than feels comfortable.",
+    "Implement Sonner for any toast notifications required."
+  ]
+}

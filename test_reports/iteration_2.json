@@ -1,0 +1,36 @@
+{
+  "summary": "Verified new stock-control and live Marketo Pro billing (Razorpay one-time fallback) features. Backend: 8/8 new pytest tests + prior 9/9 all pass. Frontend Playwright verified: stock display on /demo-store (honey shows 'N in stock', option dropdown shows '(N left)' / '— sold out' with disabled attribute), stock decrement after real checkout (33 -> 32 for honey), 409 sell-out surfaced via data-testid=checkout-error ('Out of stock: TEST_Tiny_7d6947 (only 1 left)'), Subscription section renders both sub-monthly-btn (₹199/mo) and sub-yearly-btn (₹999/yr) because billingConfigured=true (no billing-not-configured message), clicking Subscribe ₹199/mo calls /api/subscription/create and opens the Razorpay hosted checkout iframe overlay successfully, sub-activate-btn simulates active -> /demo-store hides data-testid=ad-slot, sub-cancel-btn restores it.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Shop /demo-store", "issues": ["Add-to-cart always inserts qty=1 lines; there is no qty picker so buyer can only oversell by adding the same product multiple times (backend still blocks with 409 — safe, just clunky UX)."]},
+      {"screen": "Dashboard Subscription", "issues": ["Testing helpers (simulate active/inactive) are exposed to real sellers in production build. Consider gating behind an admin/env flag."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_stock_and_subscription.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/stock_sub.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now 1007 lines — split into routers (auth, shop, orders, subscription, webhooks) is overdue.",
+    "create_order does the stock check and stock decrement without a MongoDB transaction; concurrent orders could race past the check and go negative. For MVP acceptable, but consider $inc with a filter {stock: {$gte: qty}} atomic update, or a Mongo session/transaction.",
+    "verify-payment matches only user.proOrderId, so a second /subscription/create overwrites the previous proOrderId and invalidates prior in-flight payment attempts — acceptable but should be documented.",
+    "Testing helper /api/subscription/simulate is unauthenticated-by-role (only requires login) and mutates real subscription status — should be behind an env flag like ENABLE_TEST_HELPERS in production.",
+    "Shop.js addToCart pushes duplicate cart lines instead of incrementing quantity — small UX gap."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_stock_and_subscription.py"
+  ],
+  "success_rate": { "backend": "100%", "frontend": "100%" },
+  "test_credentials": "Owner: bongsharnipan123@gmail.com / Marketo@Admin2026 (store demo-store). Buyer email: buyer@marketo-demo.com.",
+  "seed_data_creation": "Left behind (prefixed for cleanup): TEST_Stock_*, TEST_Tiny_7d6947 (stock 1), TEST_Opt_bce8b8 (Size S sold-out, M 2 left). Also 1 real order placed on honey via the UI, so honey stock is now 32.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 6 review-request flows verified end-to-end. billingConfigured=true — RAZORPAY_PLATFORM_KEY_ID is set server-side and /api/subscription/create returns mode=onetime (Subscriptions API not enabled on test acct as expected) with a real razorpay orderId; widget opens with Razorpay 'Test Mode' banner. Backend rejects bad HMAC in /subscription/verify-payment (400). Owner subscription left as 'inactive' after cleanup — ad slot restored on /demo-store.",
+  "rca of the issue": "No unresolved issues."
+}

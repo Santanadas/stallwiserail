@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://marketo-core-logic.preview.emergentagent.com/sitemap.xml

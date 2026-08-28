@@ -1,0 +1,35 @@
+{
+  "summary": "Frontend-only testing of the redesigned Seller Dashboard and Order Detail pages (Swiss-brutalist restyle). All 12 requested scenarios PASSED functionally with preserved data-testids: login→dashboard, all 5 panels render (store/razorpay/products/orders/subscription), store name edit + save persists across reload, store-shop-link navigates to /demo-store, Razorpay connect flips rp-status to 'Connected ••••2345' and disconnect flips it to 'Not connected', product create (simple + with Size|priceDelta|stock option group) appears in products-table Options column, product-del removes the row, orders-filter=disputed narrows the table (3 rows vs 9 all), StatusPill badges render, order-open-{id} navigates, end-to-end order state machine works (placed → simulate-payment → paid → ship → shipped → out-for-delivery → delivered_pending_otp → confirm-delivery with correct OTP → delivered_confirmed with acceptance-window + window-countdown ticking '119m 57s'), wrong OTP surfaces detail-error 'Invalid OTP (1/5)', subscription panel shows ₹149/month and ₹999/year matching landing, sub-activate/sub-cancel toggle sub-status between active/inactive, logout-btn redirects to /login and anon /dashboard bounces to /login. Mobile (390x844) no horizontal overflow on /dashboard nor /orders/{id}. Landing + all 4 auth pages still render correctly (titles + h1s preserved).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "OrderDetail.act()", "issue": "On failed confirm-delivery (wrong OTP), the client only sets err and does NOT call load(), so the 'Attempts: X/5' counter and the otpLocked flag stay stale until the next successful action or a manual refresh. Error toast shows '1/5' but the counter below still reads '0/5'. Minor UX inconsistency.", "selector": "[data-testid='order-actions-panel'] Attempts counter", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Public shop page /demo-store", "issues": ["Still uses the old unstyled layout — out of scope for this iteration (only dashboard + order-detail were requested) but flagged since it now looks visually disconnected from the newly restyled landing, auth, dashboard, and order-detail pages. Same for /orders/track (buyer order page shown in screenshot: plain text list)."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "OPTIONAL/LOW: In OrderDetail.act(), also call load() inside the catch branch (or refetch after error) so the Attempts counter and otpLocked flag stay in sync with the backend when an OTP fails.",
+    "OUT-OF-SCOPE HEADS-UP: /demo-store (Shop.js) and the buyer order page are still unstyled — restyling those to match would complete the visual unification, but was not asked for this iteration."
+  ],
+  "critical_code_review_comments": [
+    "Dashboard.js is 534 lines and holds 5 section components (Store/Razorpay/Products/Orders/Subscription). Consider splitting into src/pages/dashboard/*.js modules for maintainability now that the file is over the 500-line comfort line.",
+    "StoreSection: onChange callback is overloaded — used both as (updated, localOnly) for local edits and as () to refetch. Consider splitting into onLocalEdit / onRefetch for clarity.",
+    "OrderDetail.act() swallows the reload on error branch (see UI bug above).",
+    "ProductsSection.parseGroups() splits options by ',' — labels containing a comma would break parsing. Documented format is 'label|delta|stock, label|delta|stock', so acceptable, but consider trimming and warning on malformed input.",
+    "RazorpaySection: msg tone is chosen by string match on 'saved' — brittle; use an explicit boolean state.",
+    "Order state read-after-write race: after clicking ship-btn the detail-status text briefly shows the previous status until load() completes. Consider optimistic update or awaiting the POST response body.",
+    "Subscription panel renders plan cards only when sub.billingConfigured is true. Verified plans show 149/999 correctly matching landing and backend .env."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100% functional (1 minor UX inconsistency)"},
+  "test_credentials": "bongsharnipan123@gmail.com / Marketo@Admin2026 (owner of demo-store)",
+  "seed_data_creation": "Created two throwaway products on demo-store (TEST_Prod A, TEST_Prod B with a Size option group), then deleted TEST_Prod B. TEST_Prod A left in place (harmless, price ₹300). Created one buyer order (buyer_<ts>@marketo-demo.com, TEST_Prod A × 1) that walked through paid→shipped→delivered_confirmed. Razorpay was connected with a throwaway rzp_test_TESTKEY12345 / test_secret_abcdef1234 and then disconnected — store is back to Not connected as before. Subscription was toggled active then back to inactive.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Redesigned Dashboard + OrderDetail are stable and all previously-working data-testids still resolve. StatusPill uppercases via CSS but the DOM text is lowercase with underscores replaced by spaces (e.g. 'delivered pending otp') — assert case-insensitively. Buyer OTP can be fetched with GET /api/buyer/orders/{id}?email={buyerEmail} (returns otp field). Simulate payment: POST /api/orders/{id}/simulate-payment (do NOT call from urllib — 403 via ingress; use page.request or curl with proper UA). Shop.js (/demo-store) and BuyerOrder.js remain unstyled and are the last two pages to bring into the Swiss-brutalist system.",
+  "rca of the issue": "No bug reproduction needed; only a minor UX inconsistency (attempts counter stale on failed OTP) — RCA is that OrderDetail.act() calls load() only on success. Fix: run load() in a finally block OR inside the catch as well."
+}

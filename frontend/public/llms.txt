@@ -1,0 +1,17 @@
+# Marketo
+
+Marketo is a zero-commission multi-vendor marketplace. Any seller can open a shop at marketo.com/{handle}, list products with options (size, colour) and stock, share one link, and receive payments directly into their own Razorpay account.
+
+## Key facts
+- Commission: 0%. Marketo never takes a cut of a sale.
+- Payments: direct to the seller's own Razorpay account. No escrow, no holding period, no payout request.
+- Pricing: Free (shop shows Marketo ads). Marketo Pro removes ads for ₹149/month or ₹999/year.
+- Delivery: confirmed by a one-time code sent to the buyer, followed by a dispute window. After the window closes the order is final.
+- Auth: email/password or Google sign-in.
+
+## Pages
+- / — homepage (what Marketo is, how it works, pricing)
+- /about — about Marketo and business model
+- /terms — terms of service
+- /privacy — privacy policy, payment credential encryption
+- /contact — support contact

@@ -1,0 +1,6 @@
+{
+  "name": "Marketto",
+  "description": "Zero-commission digital storefront platform with direct Razorpay payments, OTP delivery verification, and multi-tier subscriptions for independent sellers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

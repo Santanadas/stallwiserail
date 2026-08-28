@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="7" time="5.218" timestamp="2026-08-27T06:26:04.904776+00:00" hostname="agent-env-80aea51e-786e-488c-9c8c-7811a58c1ee8"><testcase classname="tests.test_iteration5" name="test_upload_product_image_and_serve" time="0.907" /><testcase classname="tests.test_iteration5" name="test_upload_avatar_sets_user" time="0.597" /><testcase classname="tests.test_iteration5" name="test_route_onboard_mock_fallback" time="1.691" /><testcase classname="tests.test_iteration5" name="test_route_disconnect" time="0.495" /><testcase classname="tests.test_iteration5" name="test_public_shop_bio_and_seller" time="0.120" /><testcase classname="tests.test_iteration5" name="test_orders_pagination" time="0.484"><failure message="KeyError: 'orderId'">backend/tests/test_iteration5.py:116: in test_orders_pagination
+    ids1 = {o["orderId"] for o in j["orders"]}
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/tests/test_iteration5.py:116: in &lt;setcomp&gt;
+    ids1 = {o["orderId"] for o in j["orders"]}
+            ^^^^^^^^^^^^
+E   KeyError: 'orderId'</failure></testcase><testcase classname="tests.test_iteration5" name="test_register_new_seller_has_no_store" time="0.368" /></testsuite></testsuites>

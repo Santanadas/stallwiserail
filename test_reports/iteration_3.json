@@ -1,0 +1,28 @@
+{
+  "summary": "Frontend-only testing of the new Marketo marketing landing page + stub pages + SEO. All 14 requested checks passed: sections render, semantic headings (1 h1, 5 h2), title/meta/canonical, JSON-LD @graph with Organization+WebSite+Service+FAQPage, all navigation buttons/links work, pricing shows ₹0/₹149 per month/₹999 per year, 3 stat + 3 testimonial placeholders, all four footer stub pages (/about, /terms, /privacy, /contact) win over the catch-all /:storeSlug route and each render their own h1 and document title, visit-shop form still navigates to /{handle}, /login and /register still load, no horizontal overflow at 390x844, and /robots.txt and /sitemap.xml both return 200 with valid content.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "SEO: only the root URL has a JSON-LD block. Stub pages (/about, /terms, /privacy, /contact) do not inject page-specific structured data (e.g. AboutPage, ContactPage, WebPage). Consider adding minimal JSON-LD per stub page for better AI/search discoverability.",
+    "useDocumentMeta only upserts meta[name=description], og:title/description/url, and canonical. It does NOT reset twitter:title/twitter:description on route change; those stay stuck on the landing page values across stub pages. Low priority but worth aligning.",
+    "public/robots.txt in the repo is a short 4-line file, but the served /robots.txt appears to be a much longer 'Content-Signals' policy (likely injected by hosting/ingress). The bundled file is being overridden — verify this is intentional; if the intended robots.txt (with Sitemap: line) matters for SEO, the deployment layer will need adjusting.",
+    "sitemap.xml is served with a text/html-ish response by the preview (Chrome XML viewer renders it), but status=200 and body is valid XML — acceptable.",
+    "Console shows repeated 401s from /api/auth/me for anonymous visits on every landing/stub page load. Pre-existing (AuthContext bootstraps a session check), harmless but noisy; consider suppressing the 401 log on public pages.",
+    "Footer stub-page heading uses <p> for the 'Build your own shop.' hero text — fine because the actual h2 role isn't needed there, but if this is later meant to be a heading, use <h2>.",
+    "Terms/Privacy pages say 'Last updated June 2026' — verify wording is intentional (future-dated is fine as this is Jan 2026 but content states June 2026)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a", "frontend": "100%"},
+  "test_credentials": "n/a (public pages only)",
+  "seed_data_creation": "none",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Landing + stub-page routing is stable. Catch-all /:storeSlug correctly loses to /about /terms /privacy /contact because those routes are declared first in App.js. If you extend this, keep new static routes ABOVE the /:storeSlug route. Anonymous /api/auth/me returning 401 is expected and not a bug.",
+  "rca of the issue": "No functional issues found."
+}
