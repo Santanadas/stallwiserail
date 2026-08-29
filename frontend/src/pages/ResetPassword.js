@@ -16,8 +16,8 @@ export default function ResetPassword() {
   const navigate = useNavigate();
 
   useDocumentMeta({
-    title: "Set a new password | Marketo",
-    description: "Choose a new password for your Marketo seller account.",
+    title: "Set a new password | Stall Wise",
+    description: "Choose a new password for your Stall Wise seller account.",
     path: "/reset-password",
   });
 

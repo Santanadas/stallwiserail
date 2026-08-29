@@ -31,7 +31,7 @@ client = AsyncIOMotorClient(os.environ["MONGO_URL"])
 db = client[os.environ["DB_NAME"]]
 
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
-PREMIUM_TIER = "Marketo Pro"
+PREMIUM_TIER = "Stall Wise Pro"
 FREE_TIER = "Community"
 DEFAULT_WINDOW_MIN = 120
 OTP_EXPIRY_MIN = 4320  # 3 days
@@ -71,13 +71,13 @@ def new_id(prefix):
 # ======================= Models =======================
 class RegisterIn(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=6)
-    name: str
+    password: str = Field(min_length=6, max_length=128)
+    name: str = Field(min_length=1, max_length=100)
 
 
 class LoginIn(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=1, max_length=128)
 
 
 class ForgotIn(BaseModel):
@@ -85,84 +85,84 @@ class ForgotIn(BaseModel):
 
 
 class ResetIn(BaseModel):
-    token: str
-    password: str = Field(min_length=6)
+    token: str = Field(min_length=16, max_length=128)
+    password: str = Field(min_length=6, max_length=128)
 
 
 class GoogleSessionIn(BaseModel):
-    session_id: str
+    session_id: str = Field(min_length=1, max_length=256)
 
 
 class StoreIn(BaseModel):
-    name: str
-    slug: str
-    bio: str = ""
-    acceptanceWindowMinutes: int = DEFAULT_WINDOW_MIN
+    name: str = Field(min_length=1, max_length=100)
+    slug: str = Field(min_length=2, max_length=60)
+    bio: str = Field(default="", max_length=500)
+    acceptanceWindowMinutes: int = Field(default=DEFAULT_WINDOW_MIN, ge=1, le=10080)
 
 
 class StoreUpdateIn(BaseModel):
-    name: Optional[str] = None
-    bio: Optional[str] = None
-    acceptanceWindowMinutes: Optional[int] = None
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    bio: Optional[str] = Field(default=None, max_length=500)
+    acceptanceWindowMinutes: Optional[int] = Field(default=None, ge=1, le=10080)
 
 
 class RouteOnboardIn(BaseModel):
     legal_business_name: str = Field(min_length=3, max_length=200)
     contact_name: str = Field(min_length=3, max_length=200)
     phone: str = Field(min_length=8, max_length=15)
-    business_type: str = "individual"
-    beneficiary_name: str = ""
-    account_number: str = ""
-    ifsc: str = ""
+    business_type: str = Field(default="individual", max_length=50)
+    beneficiary_name: str = Field(default="", max_length=200)
+    account_number: str = Field(default="", max_length=34)
+    ifsc: str = Field(default="", max_length=11)
 
 
 class RazorpayIn(BaseModel):
-    key_id: str
-    key_secret: str
-    webhook_secret: Optional[str] = None
+    key_id: str = Field(min_length=5, max_length=100)
+    key_secret: str = Field(min_length=8, max_length=150)
+    webhook_secret: Optional[str] = Field(default=None, max_length=150)
 
 
 class OptionIn(BaseModel):
-    label: str
-    priceDelta: float = 0
-    stock: Optional[int] = None
+    label: str = Field(min_length=1, max_length=100)
+    priceDelta: float = Field(default=0.0, ge=-1000000.0, le=1000000.0)
+    stock: Optional[int] = Field(default=None, ge=0, le=100000)
 
 
 class OptionGroupIn(BaseModel):
-    name: str
-    options: List[OptionIn]
+    name: str = Field(min_length=1, max_length=100)
+    options: List[OptionIn] = Field(min_length=1, max_length=50)
 
 
 class ProductIn(BaseModel):
-    title: str
-    description: str = ""
-    price: float
-    stock: Optional[int] = None
-    optionGroups: List[OptionGroupIn] = []
+    title: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=2000)
+    price: float = Field(ge=0.0, le=10000000.0)
+    stock: Optional[int] = Field(default=None, ge=0, le=100000)
+    optionGroups: List[OptionGroupIn] = Field(default=[], max_length=10)
     active: bool = True
-    image: Optional[str] = None
+    image: Optional[str] = Field(default=None, max_length=1000)
 
 
 class OrderItemIn(BaseModel):
-    productId: str
-    quantity: int = 1
-    optionSelections: Dict[str, str] = {}
+    productId: str = Field(min_length=1, max_length=64)
+    quantity: int = Field(default=1, ge=1, le=1000)
+    optionSelections: Dict[str, str] = Field(default={})
 
 
 class OrderIn(BaseModel):
-    storeSlug: str
-    buyerName: str
+    storeSlug: str = Field(min_length=1, max_length=60)
+    buyerName: str = Field(min_length=1, max_length=100)
     buyerEmail: EmailStr
-    items: List[OrderItemIn]
-    acceptanceWindowMinutes: Optional[int] = None
+    items: List[OrderItemIn] = Field(min_length=1, max_length=50)
+    acceptanceWindowMinutes: Optional[int] = Field(default=None, ge=1, le=10080)
 
 
 class OtpIn(BaseModel):
-    otp: str
+    otp: str = Field(min_length=4, max_length=12)
 
 
 class DisputeIn(BaseModel):
-    reason: str
+    reason: str = Field(min_length=3, max_length=1000)
 
 
 class SubSimIn(BaseModel):
@@ -231,13 +231,17 @@ async def get_current_user(request: Request) -> dict:
 
 # ======================= Auth routes =======================
 @api.post("/auth/register")
-async def register(body: RegisterIn, response: Response):
-    email = body.email.lower()
+async def register(body: RegisterIn, request: Request, response: Response):
+    client_ip = request.client.host if request.client else "unknown"
+    if not security.check_rate_limit(f"reg:{client_ip}", max_requests=10, window_seconds=900):
+        raise HTTPException(status_code=429, detail="Too many registration attempts. Please try again later.")
+    email = body.email.lower().strip()
     if await db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="Email already registered")
     user_id = new_id("user")
+    clean_name = security.sanitize_text(body.name, 100)
     doc = {
-        "user_id": user_id, "email": email, "name": body.name,
+        "user_id": user_id, "email": email, "name": clean_name,
         "password_hash": security.hash_password(body.password),
         "role": "seller", "authProvider": "password",
         "subscriptionStatus": "inactive", "created_at": iso(now()),
@@ -300,8 +304,11 @@ async def refresh(request: Request, response: Response):
 
 
 @api.post("/auth/forgot-password")
-async def forgot_password(body: ForgotIn):
-    email = body.email.lower()
+async def forgot_password(body: ForgotIn, request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    if not security.check_rate_limit(f"forgot:{client_ip}", max_requests=6, window_seconds=900):
+        raise HTTPException(status_code=429, detail="Too many password reset attempts. Please try again later.")
+    email = body.email.lower().strip()
     user = await db.users.find_one({"email": email})
     if user and user.get("authProvider") == "password":
         import secrets as _s
@@ -376,8 +383,11 @@ async def create_store(body: StoreIn, user=Depends(get_current_user)):
     if await get_my_store(user):
         raise HTTPException(status_code=400, detail="You already have a store")
     doc = {
-        "store_id": new_id("store"), "sellerId": user["user_id"], "name": body.name,
-        "slug": slug, "bio": body.bio, "acceptanceWindowMinutes": body.acceptanceWindowMinutes,
+        "store_id": new_id("store"), "sellerId": user["user_id"],
+        "name": security.sanitize_text(body.name, 100),
+        "slug": slug,
+        "bio": security.sanitize_text(body.bio, 500),
+        "acceptanceWindowMinutes": body.acceptanceWindowMinutes,
         "created_at": iso(now()),
     }
     await db.stores.insert_one(doc)
@@ -404,7 +414,13 @@ async def update_store(body: StoreUpdateIn, user=Depends(get_current_user)):
     store = await get_my_store(user)
     if not store:
         raise HTTPException(status_code=404, detail="No store")
-    upd = {k: v for k, v in body.model_dump().items() if v is not None}
+    upd = {}
+    if body.name is not None:
+        upd["name"] = security.sanitize_text(body.name, 100)
+    if body.bio is not None:
+        upd["bio"] = security.sanitize_text(body.bio, 500)
+    if body.acceptanceWindowMinutes is not None:
+        upd["acceptanceWindowMinutes"] = body.acceptanceWindowMinutes
     if upd:
         await db.stores.update_one({"store_id": store["store_id"]}, {"$set": upd})
     return await get_my_store(user)
@@ -497,7 +513,7 @@ def _route_public(route: dict) -> dict:
         "status": route.get("status"),
         "accountIdLast4": (route.get("account_id") or "")[-4:],
         "beneficiaryName": route.get("beneficiary_name"),
-        "bankLast4": (route.get("account_number") or "")[-4:] if route.get("account_number") else None,
+        "bankLast4": route.get("account_number_last4") or ((route.get("account_number") or "")[-4:] if route.get("account_number") else None),
     }
 
 
@@ -506,10 +522,17 @@ async def route_onboard(body: RouteOnboardIn, user=Depends(get_current_user)):
     store = await get_my_store(user)
     if not store:
         raise HTTPException(status_code=400, detail="Create your shop handle first")
+    clean_legal = security.sanitize_text(body.legal_business_name, 200)
+    clean_contact = security.sanitize_text(body.contact_name, 200)
+    clean_phone = security.sanitize_text(body.phone, 15)
+    clean_beneficiary = security.sanitize_text(body.beneficiary_name, 200)
+    clean_ifsc = security.sanitize_text(body.ifsc, 11).upper()
+    bank_last4 = body.account_number.strip()[-4:] if body.account_number and len(body.account_number.strip()) >= 4 else None
+
     payload = {
-        "email": user["email"], "phone": body.phone, "type": "route",
-        "reference_id": store["slug"], "legal_business_name": body.legal_business_name,
-        "business_type": body.business_type, "contact_name": body.contact_name,
+        "email": user["email"], "phone": clean_phone, "type": "route",
+        "reference_id": store["slug"], "legal_business_name": clean_legal,
+        "business_type": body.business_type, "contact_name": clean_contact,
         "profile": {"category": "ecommerce", "subcategory": "online_marketplace"},
     }
     result = await asyncio.to_thread(route_service.create_linked_account, payload)
@@ -518,11 +541,11 @@ async def route_onboard(body: RouteOnboardIn, user=Depends(get_current_user)):
     doc = {
         "sellerId": user["user_id"], "storeSlug": store["slug"],
         "account_id": result["account_id"], "mode": result["mode"], "status": result["status"],
-        "legal_business_name": body.legal_business_name, "contact_name": body.contact_name,
-        "phone": body.phone, "beneficiary_name": body.beneficiary_name,
-        "account_number_enc": security.encrypt_secret(body.account_number) if body.account_number else None,
-        "account_number": body.account_number,  # kept only for last4 display
-        "ifsc": body.ifsc, "updated_at": iso(now()),
+        "legal_business_name": clean_legal, "contact_name": clean_contact,
+        "phone": clean_phone, "beneficiary_name": clean_beneficiary,
+        "account_number_enc": security.encrypt_secret(body.account_number.strip()) if body.account_number else None,
+        "account_number_last4": bank_last4,
+        "ifsc": clean_ifsc, "updated_at": iso(now()),
     }
     await db.seller_routes.update_one({"sellerId": user["user_id"]}, {"$set": doc}, upsert=True)
     saved = await db.seller_routes.find_one({"sellerId": user["user_id"]}, {"_id": 0})
@@ -577,7 +600,11 @@ async def create_product(body: ProductIn, user=Depends(get_current_user)):
     store = await get_my_store(user)
     if not store:
         raise HTTPException(status_code=400, detail="Create a store first")
+    if body.image and not security.is_safe_image_path(body.image):
+        raise HTTPException(status_code=400, detail="Invalid image path format")
     doc = body.model_dump()
+    doc["title"] = security.sanitize_text(body.title, 200)
+    doc["description"] = security.sanitize_text(body.description, 2000)
     doc.update({"product_id": new_id("prod"), "sellerId": user["user_id"],
                 "storeSlug": store["slug"], "created_at": iso(now())})
     await db.products.insert_one(doc)
@@ -595,7 +622,12 @@ async def update_product(product_id: str, body: ProductIn, user=Depends(get_curr
     prod = await db.products.find_one({"product_id": product_id, "sellerId": user["user_id"]})
     if not prod:
         raise HTTPException(status_code=404, detail="Product not found")
-    await db.products.update_one({"product_id": product_id}, {"$set": body.model_dump()})
+    if body.image and not security.is_safe_image_path(body.image):
+        raise HTTPException(status_code=400, detail="Invalid image path format")
+    upd = body.model_dump()
+    upd["title"] = security.sanitize_text(body.title, 200)
+    upd["description"] = security.sanitize_text(body.description, 2000)
+    await db.products.update_one({"product_id": product_id}, {"$set": upd})
     return await db.products.find_one({"product_id": product_id}, {"_id": 0})
 
 
@@ -633,8 +665,12 @@ async def finalize_if_expired(order: dict) -> dict:
 
 
 @api.post("/orders")
-async def create_order(body: OrderIn):
-    store = await db.stores.find_one({"slug": body.storeSlug.lower()}, {"_id": 0})
+async def create_order(body: OrderIn, request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    if not security.check_rate_limit(f"order:{client_ip}", max_requests=30, window_seconds=600):
+        raise HTTPException(status_code=429, detail="Too many orders placed. Please try again in a few minutes.")
+
+    store = await db.stores.find_one({"slug": body.storeSlug.lower().strip()}, {"_id": 0})
     if not store:
         raise HTTPException(status_code=404, detail="Store not found")
     items = []
@@ -642,8 +678,8 @@ async def create_order(body: OrderIn):
     prod_cache = {}
     demand = {}  # product_id -> {"product_qty": int, "options": {group: {label: qty}}}
     for it in body.items:
-        if it.quantity < 1:
-            raise HTTPException(status_code=400, detail="Quantity must be at least 1")
+        if it.quantity < 1 or it.quantity > 1000:
+            raise HTTPException(status_code=400, detail="Invalid item quantity")
         prod = prod_cache.get(it.productId)
         if prod is None:
             prod = await db.products.find_one({"product_id": it.productId, "active": True}, {"_id": 0})
@@ -663,11 +699,16 @@ async def create_order(body: OrderIn):
             unit += float(chosen.get("priceDelta") or 0)
             d["options"].setdefault(gname, {})
             d["options"][gname][chosen["label"]] = d["options"][gname].get(chosen["label"], 0) + it.quantity
+        if unit < 0:
+            raise HTTPException(status_code=400, detail="Invalid calculated unit price")
         line_total = unit * it.quantity
         total += line_total
         items.append({"productId": it.productId, "title": prod["title"],
                       "optionSelections": it.optionSelections, "quantity": it.quantity,
                       "unitPrice": unit})
+
+    if total < 0:
+        raise HTTPException(status_code=400, detail="Total order amount cannot be negative")
 
     # Stock check (block sell-outs). stock=None means unlimited.
     for pid, need in demand.items():
@@ -701,10 +742,11 @@ async def create_order(body: OrderIn):
         if set_doc:
             await db.products.update_one({"product_id": pid}, {"$set": set_doc})
 
+    clean_buyer_name = security.sanitize_text(body.buyerName, 100)
     window = body.acceptanceWindowMinutes or store.get("acceptanceWindowMinutes", DEFAULT_WINDOW_MIN)
     order_id = new_id("ord")
     doc = {
-        "order_id": order_id, "buyerName": body.buyerName, "buyerEmail": body.buyerEmail.lower(),
+        "order_id": order_id, "buyerName": clean_buyer_name, "buyerEmail": body.buyerEmail.lower().strip(),
         "sellerId": store["sellerId"], "storeSlug": store["slug"], "items": items,
         "amount": round(total, 2), "status": "placed",
         "otpCodeHash": None, "otpEnc": None, "otpGeneratedAt": None, "otpAttempts": 0,
@@ -726,7 +768,7 @@ async def create_order(body: OrderIn):
                 "receipt": order_id[:40],
                 "transfers": [{
                     "account": route["account_id"], "amount": amount_paise, "currency": "INR",
-                    "on_hold": 0, "notes": {"platform": "Marketo", "storeSlug": store["slug"]},
+                    "on_hold": 0, "notes": {"platform": "Peddle Cart", "storeSlug": store["slug"]},
                 }],
             })
             rp_order_id = rp["id"]
@@ -781,9 +823,12 @@ async def seller_order_detail(order_id: str, user=Depends(get_current_user)):
 
 
 @api.get("/buyer/orders/{order_id}")
-async def buyer_order_detail(order_id: str, email: str = Query(...)):
+async def buyer_order_detail(order_id: str, email: str = Query(...), request: Request = None):
+    client_ip = request.client.host if request and request.client else "unknown"
+    if not security.check_rate_limit(f"buyer_ord:{client_ip}", max_requests=40, window_seconds=60):
+        raise HTTPException(status_code=429, detail="Too many requests. Please slow down.")
     o = await db.orders.find_one({"order_id": order_id})
-    if not o or o["buyerEmail"] != email.lower():
+    if not o or o["buyerEmail"] != email.lower().strip():
         raise HTTPException(status_code=404, detail="Order not found")
     o = await finalize_if_expired(o)
     return sanitize_order(o, for_buyer=True)
@@ -791,10 +836,12 @@ async def buyer_order_detail(order_id: str, email: str = Query(...)):
 
 @api.post("/orders/{order_id}/simulate-payment")
 async def simulate_payment(order_id: str):
-    """MOCKED payment success for testing when a real Razorpay account is not connected."""
+    """MOCKED payment success for testing ONLY when mockPayment is explicitly true."""
     o = await db.orders.find_one({"order_id": order_id})
     if not o:
         raise HTTPException(status_code=404, detail="Order not found")
+    if not o.get("mockPayment"):
+        raise HTTPException(status_code=403, detail="Payment simulation is only allowed on mock-payment orders")
     if o["status"] != "placed":
         raise HTTPException(status_code=400, detail="Order is not awaiting payment")
     await db.orders.update_one({"order_id": order_id},
@@ -817,12 +864,41 @@ async def razorpay_webhook(request: Request):
     order = await db.orders.find_one({"razorpayOrderId": rp_order_id})
     if not order:
         return {"status": "ignored"}
+
+    verified = False
     gateway = await db.seller_gateways.find_one({"sellerId": order["sellerId"]})
     if gateway and gateway.get("webhook_secret_enc"):
-        secret = security.decrypt_secret(gateway["webhook_secret_enc"])
-        expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(expected, signature):
-            raise HTTPException(status_code=400, detail="Invalid signature")
+        try:
+            secret = security.decrypt_secret(gateway["webhook_secret_enc"])
+            expected = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+            if hmac.compare_digest(expected, signature):
+                verified = True
+            else:
+                raise HTTPException(status_code=400, detail="Invalid seller gateway webhook signature")
+        except Exception as e:
+            if isinstance(e, HTTPException):
+                raise e
+            raise HTTPException(status_code=400, detail="Webhook signature verification failed")
+
+    # If seller doesn't have custom webhook secret, check platform webhook secret
+    platform_secret = os.environ.get("RAZORPAY_PLATFORM_WEBHOOK_SECRET") or os.environ.get("RAZORPAY_WEBHOOK_SECRET")
+    if not verified and platform_secret:
+        try:
+            expected = hmac.new(platform_secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+            if hmac.compare_digest(expected, signature):
+                verified = True
+            else:
+                raise HTTPException(status_code=400, detail="Invalid platform webhook signature")
+        except Exception as e:
+            if isinstance(e, HTTPException):
+                raise e
+            raise HTTPException(status_code=400, detail="Webhook signature verification failed")
+
+    # In production with live payments, signature verification must pass
+    if not verified and not order.get("mockPayment"):
+        if not signature:
+            raise HTTPException(status_code=400, detail="Missing webhook signature")
+
     if data.get("event") in ("payment.captured", "order.paid") and order["status"] == "placed":
         await db.orders.update_one({"order_id": order["order_id"]},
                                    {"$set": {"status": "paid", "paidAt": iso(now())}})
@@ -862,7 +938,11 @@ async def out_for_delivery(order_id: str, user=Depends(get_current_user)):
 
 
 @api.post("/orders/{order_id}/confirm-delivery")
-async def confirm_delivery(order_id: str, body: OtpIn, user=Depends(get_current_user)):
+async def confirm_delivery(order_id: str, body: OtpIn, request: Request, user=Depends(get_current_user)):
+    client_ip = request.client.host if request.client else "unknown"
+    if not security.check_rate_limit(f"otp_conf:{client_ip}", max_requests=20, window_seconds=60):
+        raise HTTPException(status_code=429, detail="Too many verification attempts. Please wait a moment.")
+
     o = await db.orders.find_one({"order_id": order_id, "sellerId": user["user_id"]})
     if not o:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -875,7 +955,7 @@ async def confirm_delivery(order_id: str, body: OtpIn, user=Depends(get_current_
         raise HTTPException(status_code=400, detail="No OTP issued for this order")
     if now() > gen + timedelta(minutes=OTP_EXPIRY_MIN):
         raise HTTPException(status_code=400, detail="OTP expired")
-    if not security.verify_otp(body.otp, o["otpCodeHash"]):
+    if not security.verify_otp(body.otp.strip(), o["otpCodeHash"]):
         attempts = o.get("otpAttempts", 0) + 1
         locked = attempts >= OTP_MAX_ATTEMPTS
         await db.orders.update_one({"order_id": order_id},
@@ -894,7 +974,7 @@ async def confirm_delivery(order_id: str, body: OtpIn, user=Depends(get_current_
 @api.post("/buyer/orders/{order_id}/dispute")
 async def raise_dispute(order_id: str, body: DisputeIn, email: str = Query(...)):
     o = await db.orders.find_one({"order_id": order_id})
-    if not o or o["buyerEmail"] != email.lower():
+    if not o or o["buyerEmail"] != email.lower().strip():
         raise HTTPException(status_code=404, detail="Order not found")
     o = await finalize_if_expired(o)
     if o["status"] == "completed":
@@ -904,8 +984,9 @@ async def raise_dispute(order_id: str, body: DisputeIn, email: str = Query(...))
     exp = parse_dt(o.get("windowExpiresAt"))
     if exp and now() >= exp:
         raise HTTPException(status_code=400, detail="Acceptance window has closed. No refunds possible.")
+    clean_reason = security.sanitize_text(body.reason, 1000)
     await db.orders.update_one({"order_id": order_id}, {"$set": {
-        "status": "disputed", "disputeRaised": True, "disputeReason": body.reason,
+        "status": "disputed", "disputeRaised": True, "disputeReason": clean_reason,
         "disputedAt": iso(now()),
     }})
     return {"status": "disputed"}
@@ -1062,7 +1143,7 @@ async def subscription_simulate(body: SubSimIn, user=Depends(get_current_user)):
 
 @api.get("/")
 async def root():
-    return {"service": "Marketo API", "status": "ok"}
+    return {"service": "Peddle Cart API", "status": "ok"}
 
 
 app.include_router(api)

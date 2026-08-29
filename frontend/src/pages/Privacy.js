@@ -5,8 +5,8 @@ const H2 = ({ children }) => <h2 className="mk-head text-lg font-extrabold track
 
 export default function Privacy() {
   useDocumentMeta({
-    title: "Privacy Policy | Marketo",
-    description: "What data Marketo collects from sellers and buyers, how payment credentials are encrypted, and how to request deletion.",
+    title: "Privacy Policy | Stall Wise",
+    description: "What data Stall Wise collects from sellers and buyers, how payment credentials are encrypted, and how to request deletion.",
     path: "/privacy",
     schemaType: "WebPage",
   });

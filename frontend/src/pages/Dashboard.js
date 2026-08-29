@@ -202,7 +202,7 @@ function RouteSection({ onChange }) {
     >
       <p className="mb-4 flex items-start gap-2 text-sm text-[#525252]">
         <Landmark className="mt-0.5 h-4 w-4 shrink-0 text-[#FF4F00]" />
-        Marketo is a Razorpay Partner. You're onboarded as a linked account, so buyer payments settle directly to
+        Peddle Cart is a Razorpay Partner. You're onboarded as a linked account, so buyer payments settle directly to
         your own bank — with <b className="text-[#0A0A0A]">0% commission</b>. (You can configure this whenever you
         are ready).
       </p>
@@ -593,16 +593,19 @@ function ProductsSection({
                 </div>
               )}
 
-              {/* Hover overlay with actions & title */}
-              <div className="absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/90 via-black/40 to-transparent p-3 text-white opacity-0 transition-opacity group-hover:opacity-100">
+              {/* Bottom bar on touch / hover overlay */}
+              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent p-2.5 sm:p-3 text-white transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
                 <p className="text-xs font-bold line-clamp-1">{p.title}</p>
-                {p.description && <p className="text-[11px] text-neutral-300 line-clamp-1">{p.description}</p>}
-                <div className="mt-2 flex items-center justify-between border-t border-white/20 pt-2">
+                {p.description && <p className="text-[11px] text-neutral-300 line-clamp-1 hidden sm:block">{p.description}</p>}
+                <div className="mt-1 flex items-center justify-between border-t border-white/20 pt-1 sm:mt-2 sm:pt-2">
                   <span className="text-xs font-black text-[#FF4F00]">₹{p.price}</span>
                   <button
                     type="button"
-                    onClick={() => del(p.product_id)}
-                    className="rounded p-1 text-white hover:bg-red-600 transition-colors"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      del(p.product_id);
+                    }}
+                    className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded p-1 text-white hover:bg-red-600 transition-colors"
                     title="Delete product"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -670,7 +673,7 @@ function ProductsSection({
                     <button
                       data-testid={`product-del-${p.product_id}`}
                       onClick={() => del(p.product_id)}
-                      className="p-1 text-[#8A2200] transition-colors hover:text-[#FF4F00]"
+                      className="min-h-[36px] min-w-[36px] p-1 text-[#8A2200] transition-colors hover:text-[#FF4F00]"
                       title="Delete"
                     >
                       <Trash2 className="h-4 w-4" />
@@ -718,7 +721,40 @@ function OrdersSection() {
         </span>
       }
     >
-      <div className="overflow-x-auto">
+      {/* Mobile Card View (Optimized for phones) */}
+      <div className="block space-y-3 md:hidden">
+        {orders.map((o) => (
+          <div
+            key={o.order_id}
+            data-testid={`order-card-${o.order_id}`}
+            className="border-2 border-[#0A0A0A] bg-[#FAFAFA] p-4 transition-all hover:bg-white"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="font-bold text-[#0A0A0A]">{o.buyerName || "Customer"}</p>
+                <p className="font-mono text-xs text-[#525252]">#{o.order_id}</p>
+              </div>
+              <StatusPill status={o.status} data-testid={`order-status-mobile-${o.order_id}`} />
+            </div>
+            <div className="mt-3 flex items-center justify-between border-t border-[#E5E5E5] pt-3">
+              <div>
+                <span className="text-[10px] uppercase tracking-wider text-[#525252]">Amount</span>
+                <p className="font-bold text-[#0A0A0A]">₹{o.amount}</p>
+              </div>
+              <Link
+                to={`/orders/${o.order_id}`}
+                data-testid={`order-open-${o.order_id}`}
+                className="inline-flex min-h-[38px] items-center gap-1 border-2 border-[#0A0A0A] bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-[#0A0A0A] transition-transform hover:-translate-y-0.5 hover:bg-[#0A0A0A] hover:text-white"
+              >
+                Open Order →
+              </Link>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop Table View */}
+      <div className="hidden md:block overflow-x-auto">
         <table data-testid="orders-table" className="w-full min-w-[620px] border-collapse text-sm">
           <thead>
             <tr className="border-b-2 border-[#0A0A0A] text-left text-xs font-bold uppercase tracking-widest text-[#525252]">
@@ -745,7 +781,7 @@ function OrdersSection() {
                 <td className="py-3 text-right">
                   <Link
                     to={`/orders/${o.order_id}`}
-                    data-testid={`order-open-${o.order_id}`}
+                    data-testid={`order-open-desktop-${o.order_id}`}
                     className="text-xs font-bold uppercase tracking-wider transition-colors hover:text-[#FF4F00]"
                   >
                     Open →
@@ -828,7 +864,7 @@ function SubscriptionSection({ user, onChange }) {
       }
       const base = {
         key: data.keyId,
-        name: "Marketo",
+        name: "Stall Wise",
         description: `${data.tier} (${interval})`,
         prefill: { email: user?.email || "", name: user?.name || "" },
       };
@@ -975,8 +1011,8 @@ export default function Dashboard() {
   const navigate = useNavigate();
 
   useDocumentMeta({
-    title: "Seller Profile & Dashboard | Marketo",
-    description: "Manage your Marketo shop, products, orders and payouts.",
+    title: "Seller Profile & Dashboard | Stall Wise",
+    description: "Manage your Stall Wise shop, products, orders and payouts.",
     path: "/dashboard",
   });
 
@@ -1028,12 +1064,26 @@ export default function Dashboard() {
     }
   }, [storeLoaded, store, navigate]);
 
-  const copyShopUrl = () => {
+  const copyShopUrl = async () => {
     if (!store) return;
-    const url = `${window.location.origin}/${store.slug}`;
-    navigator.clipboard?.writeText(url);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2500);
+    const url = `https://stallwise.in/${store.slug}`;
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: `${store.name || "My Store"} on Stall Wise`,
+          text: `Check out my shop on Stall Wise!`,
+          url,
+        });
+        return;
+      } catch {
+        // Fallback to clipboard
+      }
+    }
+    if (navigator.clipboard) {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    }
   };
 
   if (!user) return null;
@@ -1041,15 +1091,15 @@ export default function Dashboard() {
   return (
     <div className="mk min-h-screen bg-[#FAFAFA] text-[#0A0A0A]" data-testid="dashboard">
       {/* App Header */}
-      <header className="sticky top-0 z-50 border-b-2 border-[#0A0A0A] bg-white">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-5 py-3.5 md:px-8">
+      <header className="sticky top-0 z-50 border-b-2 border-[#0A0A0A] bg-white/95 backdrop-blur-sm">
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6 md:px-8 md:py-3.5">
           <div className="flex items-center gap-3">
             <Link
               to="/"
               className="mk-head text-lg font-black tracking-tighter"
               data-testid="dashboard-brand-logo"
             >
-              MARKETO<span className="text-[#FF4F00]">.</span>
+              STALL WISE<span className="text-[#FF4F00]">.</span>
             </Link>
             {store && (
               <span className="hidden sm:inline-block border-l-2 border-neutral-300 pl-3 text-xs font-mono font-bold text-[#525252]">
@@ -1058,14 +1108,14 @@ export default function Dashboard() {
             )}
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             {store && (
               <Link
                 to={`/${store.slug}`}
                 target="_blank"
-                className="hidden sm:inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-[#0A0A0A] hover:text-[#FF4F00]"
+                className="inline-flex min-h-[36px] items-center gap-1 border border-[#0A0A0A] bg-white px-2.5 py-1.5 text-xs font-bold uppercase tracking-wider text-[#0A0A0A] hover:bg-[#0A0A0A] hover:text-white sm:border-0 sm:px-0 sm:py-0"
               >
-                View Shop <ExternalLink className="h-3.5 w-3.5" />
+                <span>View Shop</span> <ExternalLink className="h-3.5 w-3.5" />
               </Link>
             )}
             <Btn
@@ -1076,20 +1126,20 @@ export default function Dashboard() {
                 navigate("/login");
               }}
             >
-              <LogOut className="h-4 w-4" /> Logout
+              <LogOut className="h-4 w-4" /> <span className="hidden sm:inline">Logout</span>
             </Btn>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-5 py-8 md:px-8 md:py-12">
+      <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8 md:px-8 md:py-12">
         {/* ================= INSTAGRAM-STYLE PROFILE HEADER ================= */}
         {store && (
-          <div className="mb-10 border-2 border-[#0A0A0A] bg-white p-6 shadow-[6px_6px_0px_0px_rgba(10,10,10,1)] sm:p-8">
-            <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:gap-8">
+          <div className="mb-8 border-2 border-[#0A0A0A] bg-white p-5 shadow-[4px_4px_0px_0px_rgba(10,10,10,1)] sm:mb-10 sm:p-8 sm:shadow-[6px_6px_0px_0px_rgba(10,10,10,1)]">
+            <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:gap-8">
               {/* Profile Photo (PFP) with Instagram-like border ring */}
               <div className="relative mx-auto sm:mx-0 shrink-0">
-                <div className="h-28 w-28 rounded-full border-4 border-[#0A0A0A] p-1 bg-white shadow-md">
+                <div className="h-24 w-24 sm:h-28 sm:w-28 rounded-full border-4 border-[#0A0A0A] p-1 bg-white shadow-md">
                   <div className="h-full w-full overflow-hidden rounded-full bg-[#FAFAFA] flex items-center justify-center">
                     {user?.avatar ? (
                       <img
@@ -1098,7 +1148,7 @@ export default function Dashboard() {
                         className="h-full w-full object-cover"
                       />
                     ) : (
-                      <Store className="h-12 w-12 text-neutral-400" />
+                      <Store className="h-10 w-10 sm:h-12 sm:w-12 text-neutral-400" />
                     )}
                   </div>
                 </div>
@@ -1131,7 +1181,7 @@ export default function Dashboard() {
                         setShowAddModal(true);
                         setActiveTab("products");
                       }}
-                      className="px-4 py-2 text-xs"
+                      className="min-h-[38px] px-3.5 py-2 text-xs"
                     >
                       <Plus className="h-4 w-4" /> Add Product
                     </Btn>
@@ -1139,7 +1189,7 @@ export default function Dashboard() {
                     <button
                       type="button"
                       onClick={copyShopUrl}
-                      className="inline-flex items-center gap-1.5 border-2 border-[#0A0A0A] bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider transition-transform hover:-translate-y-0.5 hover:bg-[#FAFAFA]"
+                      className="inline-flex min-h-[38px] items-center gap-1.5 border-2 border-[#0A0A0A] bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider transition-transform hover:-translate-y-0.5 hover:bg-[#FAFAFA]"
                     >
                       {copied ? (
                         <>
@@ -1147,14 +1197,14 @@ export default function Dashboard() {
                         </>
                       ) : (
                         <>
-                          <Share2 className="h-3.5 w-3.5" /> Share Shop
+                          <Share2 className="h-3.5 w-3.5" /> Share
                         </>
                       )}
                     </button>
 
                     <Link
                       to={`/${store?.slug || ""}`}
-                      className="inline-flex items-center gap-1.5 border-2 border-[#0A0A0A] bg-[#0A0A0A] px-3 py-2 text-xs font-bold uppercase tracking-wider text-white transition-transform hover:-translate-y-0.5 hover:bg-[#FF4F00]"
+                      className="inline-flex min-h-[38px] items-center gap-1.5 border-2 border-[#0A0A0A] bg-[#0A0A0A] px-3 py-2 text-xs font-bold uppercase tracking-wider text-white transition-transform hover:-translate-y-0.5 hover:bg-[#FF4F00]"
                     >
                       Visit <ExternalLink className="h-3.5 w-3.5" />
                     </Link>
@@ -1187,7 +1237,7 @@ export default function Dashboard() {
                     </p>
                   )}
                   <p className="text-xs font-mono font-bold text-[#0A0A0A] pt-1">
-                    🔗 marketo.com/{store?.slug}
+                    🔗 stallwise.in/{store?.slug}
                   </p>
                 </div>
               </div>
@@ -1196,10 +1246,10 @@ export default function Dashboard() {
         )}
 
         {/* ================= INSTAGRAM-STYLE NAVIGATION TABS ================= */}
-        <div className="mb-6 flex border-b-2 border-[#0A0A0A] bg-white">
+        <div className="mb-6 flex overflow-x-auto border-b-2 border-[#0A0A0A] bg-white scrollbar-none">
           <button
             onClick={() => setActiveTab("products")}
-            className={`flex flex-1 items-center justify-center gap-2 py-3 text-xs font-black uppercase tracking-wider transition-colors ${
+            className={`flex shrink-0 min-w-[130px] flex-1 items-center justify-center gap-2 px-3 py-3 text-xs font-black uppercase tracking-wider transition-colors ${
               activeTab === "products"
                 ? "border-b-4 border-[#FF4F00] bg-[#FAFAFA] text-[#0A0A0A]"
                 : "text-neutral-500 hover:text-[#0A0A0A]"
@@ -1209,7 +1259,7 @@ export default function Dashboard() {
           </button>
           <button
             onClick={() => setActiveTab("orders")}
-            className={`flex flex-1 items-center justify-center gap-2 py-3 text-xs font-black uppercase tracking-wider transition-colors ${
+            className={`flex shrink-0 min-w-[130px] flex-1 items-center justify-center gap-2 px-3 py-3 text-xs font-black uppercase tracking-wider transition-colors ${
               activeTab === "orders"
                 ? "border-b-4 border-[#FF4F00] bg-[#FAFAFA] text-[#0A0A0A]"
                 : "text-neutral-500 hover:text-[#0A0A0A]"
@@ -1219,7 +1269,7 @@ export default function Dashboard() {
           </button>
           <button
             onClick={() => setActiveTab("settings")}
-            className={`flex flex-1 items-center justify-center gap-2 py-3 text-xs font-black uppercase tracking-wider transition-colors ${
+            className={`flex shrink-0 min-w-[140px] flex-1 items-center justify-center gap-2 px-3 py-3 text-xs font-black uppercase tracking-wider transition-colors ${
               activeTab === "settings"
                 ? "border-b-4 border-[#FF4F00] bg-[#FAFAFA] text-[#0A0A0A]"
                 : "text-neutral-500 hover:text-[#0A0A0A]"
@@ -1229,7 +1279,7 @@ export default function Dashboard() {
           </button>
           <button
             onClick={() => setActiveTab("payouts")}
-            className={`flex flex-1 items-center justify-center gap-2 py-3 text-xs font-black uppercase tracking-wider transition-colors ${
+            className={`flex shrink-0 min-w-[140px] flex-1 items-center justify-center gap-2 px-3 py-3 text-xs font-black uppercase tracking-wider transition-colors ${
               activeTab === "payouts"
                 ? "border-b-4 border-[#FF4F00] bg-[#FAFAFA] text-[#0A0A0A]"
                 : "text-neutral-500 hover:text-[#0A0A0A]"

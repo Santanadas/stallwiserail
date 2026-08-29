@@ -18,6 +18,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  publicDir: 'frontend/public',
   optimizeDeps: {
     esbuildOptions: {
       loader: {

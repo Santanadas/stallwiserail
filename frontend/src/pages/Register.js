@@ -23,8 +23,8 @@ export default function Register() {
   const upd = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
   useDocumentMeta({
-    title: step === "verify" ? "Verify your email | Marketo" : "Become a Seller | Marketo",
-    description: "Create a free Marketo shop in minutes. 0% commission, payments straight to your own Razorpay account.",
+    title: step === "verify" ? "Verify your email | Stall Wise" : "Become a Seller | Stall Wise",
+    description: "Create a free Stall Wise shop in minutes. 0% commission, payments straight to your own Razorpay account.",
     path: "/register",
   });
 

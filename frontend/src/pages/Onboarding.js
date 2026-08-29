@@ -56,8 +56,8 @@ export default function Onboarding() {
   const debounceTimer = useRef(null);
 
   useDocumentMeta({
-    title: "Welcome to Marketo | Set Up Your Store",
-    description: "Create your free Marketo store in seconds.",
+    title: "Welcome to Stall Wise | Set Up Your Store",
+    description: "Create your free Stall Wise store in seconds.",
     path: "/onboarding",
   });
 
@@ -197,7 +197,7 @@ export default function Onboarding() {
             animate={{ opacity: 1, x: 0 }}
             className="mk-head text-lg font-black tracking-tighter"
           >
-            MARKETO<span className="text-[#FF4F00]">.</span>
+            STALL WISE<span className="text-[#FF4F00]">.</span>
           </motion.div>
           {step > 0 && (
             <motion.button
@@ -251,7 +251,7 @@ export default function Onboarding() {
                 className="mk-head mt-8 text-4xl font-black leading-[0.95] tracking-tighter sm:text-6xl"
               >
                 Hi, Welcome to<br />
-                Marketo<span className="text-[#FF4F00]">.</span>
+                Stall Wise<span className="text-[#FF4F00]">.</span>
               </motion.h1>
 
               {/* Subtitle */}
@@ -348,7 +348,7 @@ export default function Onboarding() {
                       >
                         Your link:{" "}
                         <span className="font-mono font-bold text-[#0A0A0A]">
-                          marketo.com/{handle.slug || "your-store"}
+                          stallwise.in/{handle.slug || "your-store"}
                         </span>
                       </p>
 

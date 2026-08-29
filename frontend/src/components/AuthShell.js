@@ -40,7 +40,7 @@ export default function AuthShell({ title, subtitle, children, testId }) {
     <div className="mk min-h-screen bg-[#FAFAFA] text-[#0A0A0A] lg:grid lg:grid-cols-12" data-testid={testId}>
       <aside className="relative hidden bg-neutral-900 p-12 text-white lg:col-span-5 lg:flex lg:flex-col lg:justify-between xl:p-16">
         <Link to="/" className="mk-head text-xl font-black tracking-tighter" data-testid="auth-brand-logo">
-          MARKETO<span className="text-[#FF4F00]">.</span>
+          STALL WISE<span className="text-[#FF4F00]">.</span>
         </Link>
         <div>
           <p className="mk-head text-4xl font-black leading-[0.95] tracking-tighter xl:text-5xl">
@@ -55,14 +55,14 @@ export default function AuthShell({ title, subtitle, children, testId }) {
             ))}
           </ul>
         </div>
-        <p className="text-xs uppercase tracking-widest text-neutral-500">marketo.com/your-name</p>
+        <p className="text-xs uppercase tracking-widest text-neutral-500">stallwise.in/your-name</p>
       </aside>
 
       <div className="flex min-h-screen flex-col lg:col-span-7">
         <header className="border-b border-[#0A0A0A] bg-white lg:hidden">
           <div className="flex items-center justify-between px-5 py-4">
             <Link to="/" className="mk-head text-lg font-black tracking-tighter" data-testid="auth-brand-logo-mobile">
-              MARKETO<span className="text-[#FF4F00]">.</span>
+              STALL WISE<span className="text-[#FF4F00]">.</span>
             </Link>
             <span className="text-xs font-bold uppercase tracking-widest text-[#525252]">0% commission</span>
           </div>

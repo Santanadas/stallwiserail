@@ -1,7 +1,9 @@
 import os
+import re
 import base64
 import hashlib
 import secrets
+from typing import Optional
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta
@@ -24,6 +26,46 @@ def verify_password(plain: str, hashed: str) -> bool:
         return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
     except Exception:
         return False
+
+
+# ---------- Input sanitization & safety ----------
+def sanitize_text(val: Optional[str], max_len: int = 5000) -> str:
+    """Strips dangerous control characters and null bytes from text."""
+    if not val:
+        return ""
+    # Remove null bytes and dangerous control chars
+    clean = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", str(val))
+    return clean[:max_len].strip()
+
+
+def is_safe_image_path(path: Optional[str]) -> bool:
+    """Verifies that an image path is a safe relative file path or standard HTTPS URL."""
+    if not path:
+        return True
+    p = path.strip()
+    if p.startswith("/api/files/"):
+        # Validate path format: marketo/uploads/...
+        return bool(re.match(r"^/api/files/[a-zA-Z0-9_\-/\.]+$", p)) and ".." not in p
+    if p.startswith("https://") or p.startswith("http://"):
+        return not any(x in p.lower() for x in ("javascript:", "data:", "vbscript:", "<", ">"))
+    return False
+
+
+# ---------- In-Memory Sliding Window Rate Limiter ----------
+_rate_limits: dict = {}
+
+
+def check_rate_limit(key: str, max_requests: int, window_seconds: int) -> bool:
+    """Sliding-window rate limiter. Returns True if allowed, False if exceeded."""
+    now_ts = datetime.now(timezone.utc).timestamp()
+    history = _rate_limits.setdefault(key, [])
+    # Filter out entries older than window
+    cutoff = now_ts - window_seconds
+    _rate_limits[key] = [t for t in history if t > cutoff]
+    if len(_rate_limits[key]) >= max_requests:
+        return False
+    _rate_limits[key].append(now_ts)
+    return True
 
 
 # ---------- JWT ----------

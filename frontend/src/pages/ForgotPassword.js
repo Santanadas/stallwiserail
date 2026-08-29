@@ -13,8 +13,8 @@ export default function ForgotPassword() {
   const { resetPassword } = useAuth();
 
   useDocumentMeta({
-    title: "Reset your password | Marketo",
-    description: "Request a password reset link for your Marketo seller account.",
+    title: "Reset your password | Stall Wise",
+    description: "Request a password reset link for your Stall Wise seller account.",
     path: "/forgot-password",
   });
 

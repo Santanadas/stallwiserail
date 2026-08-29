@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://marketo-core-logic.preview.emergentagent.com/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
-  <url><loc>https://marketo-core-logic.preview.emergentagent.com/about</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://marketo-core-logic.preview.emergentagent.com/contact</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
-  <url><loc>https://marketo-core-logic.preview.emergentagent.com/terms</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>
-  <url><loc>https://marketo-core-logic.preview.emergentagent.com/privacy</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>
-  <url><loc>https://marketo-core-logic.preview.emergentagent.com/register</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://stallwise.in/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
+  <url><loc>https://stallwise.in/about</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://stallwise.in/contact</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://stallwise.in/terms</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>
+  <url><loc>https://stallwise.in/privacy</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>
+  <url><loc>https://stallwise.in/register</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
 </urlset>

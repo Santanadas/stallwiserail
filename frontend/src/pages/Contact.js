@@ -5,8 +5,8 @@ const H2 = ({ children }) => <h2 className="mk-head text-lg font-extrabold track
 
 export default function Contact() {
   useDocumentMeta({
-    title: "Contact Marketo | Seller Support",
-    description: "Reach the Marketo team about seller accounts, payments, order disputes or Marketo Pro billing.",
+    title: "Contact Stall Wise | Seller Support",
+    description: "Reach the Stall Wise team about seller accounts, payments, order disputes or Stall Wise Pro billing.",
     path: "/contact",
     schemaType: "ContactPage",
   });

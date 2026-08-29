@@ -5,30 +5,30 @@ const H2 = ({ children }) => <h2 className="mk-head text-lg font-extrabold track
 
 export default function About() {
   useDocumentMeta({
-    title: "About Marketo | Zero-Commission Marketplace for Small Sellers",
+    title: "About Stall Wise | Zero-Commission Marketplace for Small Sellers",
     description:
-      "Marketo lets anyone open an online shop at marketo.com/your-name, list products and get paid directly into their own Razorpay account with 0% commission.",
+      "Stall Wise lets anyone open an online shop at stallwise.in/your-name, list products and get paid directly into their own Razorpay account with 0% commission.",
     path: "/about",
     schemaType: "AboutPage",
   });
   return (
     <StaticPage
       testId="about-page"
-      title="About Marketo"
+      title="About Stall Wise"
       description="A marketplace that gets out of the way of the people doing the selling."
     >
       <section>
         <H2>Why we built it</H2>
         <p className="mt-2">
           Most marketplaces charge a commission on every sale, hold the money for days, then make sellers request a payout. For
-          someone selling handmade candles or a few t-shirts a week, that model eats the margin and the patience. Marketo removes
+          someone selling handmade candles or a few t-shirts a week, that model eats the margin and the patience. Stall Wise removes
           both problems: you keep 100% of the sale price, and the money goes into your own payment account.
         </p>
       </section>
       <section>
         <H2>How it works</H2>
         <p className="mt-2">
-          Every seller gets a shop page at <strong>marketo.com/your-handle</strong>. You add products with options like size and
+          Every seller gets a shop page at <strong>stallwise.in/your-handle</strong>. You add products with options like size and
           colour, share your link, and buyers check out through your own Razorpay account. Deliveries are confirmed with a
           one-time code so both sides know the order actually arrived.
         </p>
@@ -36,7 +36,7 @@ export default function About() {
       <section>
         <H2>How we make money</H2>
         <p className="mt-2">
-          Free shops display small Marketo ads. Sellers who want a clean, ad-free page subscribe to Marketo Pro at ₹149 a month or
+          Free shops display small Stall Wise ads. Sellers who want a clean, ad-free page subscribe to Stall Wise Pro at ₹149 a month or
           ₹999 a year. That subscription is the only thing we charge for — never a cut of your sales.
         </p>
       </section>

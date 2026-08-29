@@ -7,7 +7,7 @@ export default function StaticPage({ title, description, children, testId }) {
       <header className="border-b border-[#0A0A0A] bg-white">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 md:px-10">
           <Link to="/" className="mk-head text-xl font-black tracking-tighter" data-testid="static-brand-logo">
-            MARKETO<span className="text-[#FF4F00]">.</span>
+            STALL WISE<span className="text-[#FF4F00]">.</span>
           </Link>
           <Link
             to="/register"

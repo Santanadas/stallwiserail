@@ -30,8 +30,8 @@ export default function OrderDetail() {
   const [err, setErr] = useState("");
 
   useDocumentMeta({
-    title: `Order ${orderId} | Marketo`,
-    description: "Manage this Marketo order: shipping, delivery OTP and dispute window.",
+    title: `Order ${orderId} | Stall Wise`,
+    description: "Manage this Stall Wise order: shipping, delivery OTP and dispute window.",
     path: `/orders/${orderId}`,
   });
 
@@ -55,7 +55,7 @@ export default function OrderDetail() {
       <header className="border-b-2 border-[#0A0A0A] bg-white">
         <div className="mx-auto flex max-w-3xl items-center justify-between px-5 py-3.5 md:px-8">
           <Link to="/" className="mk-head text-lg font-black tracking-tighter">
-            MARKETO<span className="text-[#FF4F00]">.</span>
+            STALL WISE<span className="text-[#FF4F00]">.</span>
           </Link>
           <Link
             to="/dashboard"

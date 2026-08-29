@@ -21,8 +21,8 @@ export default function VerifyEmail() {
   const [cooldown, setCooldown] = useState(0);
 
   useDocumentMeta({
-    title: "Verify your email | Marketo",
-    description: "Verify your email address to access your seller store on Marketo.",
+    title: "Verify your email | Stall Wise",
+    description: "Verify your email address to access your seller store on Stall Wise.",
   });
 
   // Auto-apply action code if present in URL

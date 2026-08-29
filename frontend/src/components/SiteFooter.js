@@ -35,7 +35,7 @@ export default function SiteFooter() {
               </Link>
             ))}
           </nav>
-          <p className="text-sm text-neutral-500">© {new Date().getFullYear()} Marketo. All rights reserved.</p>
+          <p className="text-sm text-neutral-500">© {new Date().getFullYear()} Stall Wise. All rights reserved.</p>
         </div>
       </div>
     </footer>

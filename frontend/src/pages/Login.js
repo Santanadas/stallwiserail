@@ -16,8 +16,8 @@ export default function Login() {
   const navigate = useNavigate();
 
   useDocumentMeta({
-    title: "Seller Login | Marketo",
-    description: "Log in to your Marketo seller dashboard to manage products, orders and payouts.",
+    title: "Seller Login | Stall Wise",
+    description: "Log in to your Stall Wise seller dashboard to manage products, orders and payouts.",
     path: "/login",
   });
 

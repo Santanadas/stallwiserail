@@ -43,7 +43,7 @@ export default function BuyerOrder() {
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  useDocumentMeta({ title: "Track your order | Marketo", description: "Track your Marketo order and confirm delivery.", path: `/order/${orderId}` });
+  useDocumentMeta({ title: "Track your order | Stall Wise", description: "Track your Stall Wise order and confirm delivery.", path: `/order/${orderId}` });
 
   const load = useCallback(async () => {
     try {
@@ -65,7 +65,7 @@ export default function BuyerOrder() {
       } else if (order.razorpayOrderId) {
         const options = {
           key: order.razorpayKeyId, amount: Math.round(order.amount * 100), currency: "INR",
-          order_id: order.razorpayOrderId, name: "Marketo",
+          order_id: order.razorpayOrderId, name: "Stall Wise",
           handler: () => { setMsg("Payment submitted. Awaiting confirmation."); setTimeout(load, 2000); },
           prefill: { name: order.buyerName, email: order.buyerEmail },
         };
@@ -110,7 +110,7 @@ export default function BuyerOrder() {
     <div className="mk min-h-screen bg-[#FAFAFA] text-[#0A0A0A]" data-testid="buyer-order">
       <header className="border-b-2 border-[#0A0A0A] bg-white">
         <div className="mx-auto flex max-w-2xl items-center justify-between px-5 py-3.5">
-          <Link to="/" className="mk-head text-lg font-black tracking-tighter">MARKETO<span className="text-[#FF4F00]">.</span></Link>
+          <Link to="/" className="mk-head text-lg font-black tracking-tighter">STALL WISE<span className="text-[#FF4F00]">.</span></Link>
           <StatusPill status={order.status} data-testid="buyer-status" />
         </div>
       </header>
@@ -203,7 +203,7 @@ export default function BuyerOrder() {
         {order.status === "completed" && (
           <div className="mt-6 border-2 border-[#0A0A0A] bg-[#E6F6EC] p-6" data-testid="buyer-completed">
             <div className="flex items-center gap-2 text-[#0B5227]"><CheckCircle2 className="h-5 w-5" /><span className="font-bold">Order completed</span></div>
-            <p className="mt-2 text-sm text-[#0B5227]">The acceptance window has closed. Thanks for shopping on Marketo.</p>
+            <p className="mt-2 text-sm text-[#0B5227]">The acceptance window has closed. Thanks for shopping on Stall Wise.</p>
           </div>
         )}
 
