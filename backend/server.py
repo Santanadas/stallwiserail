@@ -293,46 +293,58 @@ def get_client_ip(request: Request) -> str:
 # ======================= Auth routes =======================
 @api.post("/auth/register")
 async def register(body: RegisterIn, request: Request, response: Response):
-    client_ip = get_client_ip(request)
-    if not security.check_rate_limit(f"reg:{client_ip}", max_requests=30, window_seconds=600):
-        raise HTTPException(status_code=429, detail="Too many registration attempts. Please try again later.")
-    email = body.email.lower().strip()
-    if await db.users.find_one({"email": email}):
-        raise HTTPException(status_code=400, detail="This email is already registered. Please go to Login.")
-    user_id = new_id("user")
-    clean_name = security.sanitize_text(body.name, 100)
-    doc = {
-        "user_id": user_id, "email": email, "name": clean_name,
-        "password_hash": security.hash_password(body.password),
-        "role": "seller", "authProvider": "password",
-        "subscriptionStatus": "inactive", "created_at": iso(now()),
-    }
-    await db.users.insert_one(doc)
-    otp_info = await _create_auth_otp(user_id, email, clean_name, "register")
-    return {"pendingOtp": True, "email": email, "otpId": otp_info["otp_id"]}
+    try:
+        client_ip = get_client_ip(request)
+        if not security.check_rate_limit(f"reg:{client_ip}", max_requests=30, window_seconds=600):
+            raise HTTPException(status_code=429, detail="Too many registration attempts. Please try again later.")
+        email = body.email.lower().strip()
+        if await db.users.find_one({"email": email}):
+            raise HTTPException(status_code=400, detail="This email is already registered. Please go to Login.")
+        user_id = new_id("user")
+        clean_name = security.sanitize_text(body.name, 100)
+        doc = {
+            "user_id": user_id, "email": email, "name": clean_name,
+            "password_hash": security.hash_password(body.password),
+            "role": "seller", "authProvider": "password",
+            "subscriptionStatus": "inactive", "created_at": iso(now()),
+        }
+        await db.users.insert_one(doc)
+        otp_info = await _create_auth_otp(user_id, email, clean_name, "register")
+        return {"pendingOtp": True, "email": email, "otpId": otp_info["otp_id"]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Registration error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
 
 
 @api.post("/auth/login")
 async def login(body: LoginIn, request: Request, response: Response):
-    email = body.email.lower().strip()
-    client_ip = get_client_ip(request)
-    ident = f"{client_ip}:{email}"
-    att = await db.login_attempts.find_one({"identifier": ident})
-    if att and att.get("count", 0) >= 10:
-        locked_until = parse_dt(att.get("locked_until"))
-        if locked_until and locked_until > now():
-            raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
-    user = await db.users.find_one({"email": email})
-    if not user or not user.get("password_hash") or not security.verify_password(body.password, user["password_hash"]):
-        await db.login_attempts.update_one(
-            {"identifier": ident},
-            {"$inc": {"count": 1}, "$set": {"locked_until": iso(now() + timedelta(minutes=15))}},
-            upsert=True,
-        )
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-    await db.login_attempts.delete_one({"identifier": ident})
-    otp_info = await _create_auth_otp(user["user_id"], email, user.get("name", ""), "login")
-    return {"pendingOtp": True, "email": email, "otpId": otp_info["otp_id"]}
+    try:
+        email = body.email.lower().strip()
+        client_ip = get_client_ip(request)
+        ident = f"{client_ip}:{email}"
+        att = await db.login_attempts.find_one({"identifier": ident})
+        if att and att.get("count", 0) >= 10:
+            locked_until = parse_dt(att.get("locked_until"))
+            if locked_until and locked_until > now():
+                raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
+        user = await db.users.find_one({"email": email})
+        if not user or not user.get("password_hash") or not security.verify_password(body.password, user["password_hash"]):
+            await db.login_attempts.update_one(
+                {"identifier": ident},
+                {"$inc": {"count": 1}, "$set": {"locked_until": iso(now() + timedelta(minutes=15))}},
+                upsert=True,
+            )
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        await db.login_attempts.delete_one({"identifier": ident})
+        otp_info = await _create_auth_otp(user["user_id"], email, user.get("name", ""), "login")
+        return {"pendingOtp": True, "email": email, "otpId": otp_info["otp_id"]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Login error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
 
 
 @api.post("/auth/verify-otp")
