@@ -367,8 +367,8 @@ async def _create_auth_otp(user_id: str, email: str, name: str, purpose: str, pa
         """,
         otp_id, user_id, email, name, password_hash, otp_hash, purpose, created_at, expires_at
     )
-    # Send email in background asynchronously
-    asyncio.create_task(email_service.send_auth_otp_email(email, name, otp))
+    # Send email directly and ensure delivery
+    await email_service.send_auth_otp_email(email, name, otp)
     logger.info(f"Auth OTP for {email} ({purpose}): {otp}")
     return {"otp_id": otp_id}
 
@@ -503,7 +503,7 @@ async def resend_auth_otp(body: ResendOtpIn, request: Request):
         body.otp_id
     )
     user_name = rec.get("name") or ""
-    asyncio.create_task(email_service.send_auth_otp_email(rec["email"], user_name, otp))
+    await email_service.send_auth_otp_email(rec["email"], user_name, otp)
     return {"ok": True, "message": "New verification code sent"}
 
 
