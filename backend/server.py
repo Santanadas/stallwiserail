@@ -280,15 +280,25 @@ async def _create_auth_otp(user_id: str, email: str, name: str, purpose: str) ->
     return {"otp_id": otp_id}
 
 
+def get_client_ip(request: Request) -> str:
+    cf_ip = request.headers.get("CF-Connecting-IP")
+    if cf_ip:
+        return cf_ip.strip()
+    xff = request.headers.get("X-Forwarded-For")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "127.0.0.1"
+
+
 # ======================= Auth routes =======================
 @api.post("/auth/register")
 async def register(body: RegisterIn, request: Request, response: Response):
-    client_ip = request.client.host if request.client else "unknown"
-    if not security.check_rate_limit(f"reg:{client_ip}", max_requests=10, window_seconds=900):
+    client_ip = get_client_ip(request)
+    if not security.check_rate_limit(f"reg:{client_ip}", max_requests=30, window_seconds=600):
         raise HTTPException(status_code=429, detail="Too many registration attempts. Please try again later.")
     email = body.email.lower().strip()
     if await db.users.find_one({"email": email}):
-        raise HTTPException(status_code=400, detail="Email already registered")
+        raise HTTPException(status_code=400, detail="This email is already registered. Please go to Login.")
     user_id = new_id("user")
     clean_name = security.sanitize_text(body.name, 100)
     doc = {
@@ -304,10 +314,11 @@ async def register(body: RegisterIn, request: Request, response: Response):
 
 @api.post("/auth/login")
 async def login(body: LoginIn, request: Request, response: Response):
-    email = body.email.lower()
-    ident = f"{request.client.host}:{email}"
+    email = body.email.lower().strip()
+    client_ip = get_client_ip(request)
+    ident = f"{client_ip}:{email}"
     att = await db.login_attempts.find_one({"identifier": ident})
-    if att and att.get("count", 0) >= 5:
+    if att and att.get("count", 0) >= 10:
         locked_until = parse_dt(att.get("locked_until"))
         if locked_until and locked_until > now():
             raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
@@ -326,8 +337,8 @@ async def login(body: LoginIn, request: Request, response: Response):
 
 @api.post("/auth/verify-otp")
 async def verify_auth_otp(body: VerifyOtpIn, request: Request, response: Response):
-    client_ip = request.client.host if request.client else "unknown"
-    if not security.check_rate_limit(f"auth_otp:{client_ip}", max_requests=20, window_seconds=60):
+    client_ip = get_client_ip(request)
+    if not security.check_rate_limit(f"auth_otp:{client_ip}", max_requests=30, window_seconds=60):
         raise HTTPException(status_code=429, detail="Too many verification attempts. Please wait.")
     rec = await db.pending_otps.find_one({"otp_id": body.otp_id})
     if not rec:
