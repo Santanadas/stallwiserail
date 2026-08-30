@@ -1066,9 +1066,12 @@ function OrdersSection() {
 /* ==========================================================================
    PRO SUBSCRIPTION PLAN SECTION
    ========================================================================== */
-function SubscriptionSection({ user, onChange }) {
+function SubscriptionSection({ onChange }) {
+  const { user, checkAuth } = useAuth();
   const [sub, setSub] = useState(null);
-  const [msg, setMsg] = useState("");
+  const [subscribing, setSubscribing] = useState(null);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -1092,66 +1095,80 @@ function SubscriptionSection({ user, onChange }) {
     });
 
   const subscribe = async (interval) => {
-    setMsg("");
+    setErrorMsg("");
+    setSuccessMsg("");
+    setSubscribing(interval);
     try {
       const { data } = await api.post("/subscription/create", { interval });
-      const ok = await loadScript();
-      if (!ok) {
-        setMsg("Could not load Razorpay checkout.");
+
+      if (data.mode === "test_activated") {
+        setSuccessMsg(data.message || `Stall Wise Pro (${interval}) activated!`);
+        await load();
+        if (checkAuth) await checkAuth();
+        if (onChange) onChange();
+        setSubscribing(null);
         return;
       }
-      const base = {
+
+      const ok = await loadScript();
+      if (!ok || !window.Razorpay) {
+        setErrorMsg("Could not load payment checkout script. Please verify your connection.");
+        setSubscribing(null);
+        return;
+      }
+
+      const options = {
         key: data.keyId,
+        order_id: data.orderId,
+        amount: data.amount * 100,
+        currency: data.currency || "INR",
         name: "Stall Wise",
         description: `${data.tier} (${interval})`,
         prefill: { email: user?.email || "", name: user?.name || "" },
+        theme: { color: "#FF4F00" },
+        modal: {
+          ondismiss: () => {
+            setSubscribing(null);
+          },
+        },
+        handler: async (res) => {
+          try {
+            await api.post("/subscription/verify-payment", {
+              razorpay_order_id: res.razorpay_order_id,
+              razorpay_payment_id: res.razorpay_payment_id,
+              razorpay_signature: res.razorpay_signature,
+            });
+            setSuccessMsg(`🎉 Stall Wise Pro (${interval}) is now active!`);
+            await load();
+            if (checkAuth) await checkAuth();
+            if (onChange) onChange();
+          } catch (e) {
+            setErrorMsg(formatApiError(e.response?.data?.detail) || "Payment verification failed.");
+          } finally {
+            setSubscribing(null);
+          }
+        },
       };
-      let options;
-      if (data.mode === "subscription") {
-        options = {
-          ...base,
-          subscription_id: data.subscriptionId,
-          handler: () => {
-            setMsg("Subscription authorized — activating shortly.");
-            setTimeout(() => {
-              load();
-              onChange();
-            }, 3000);
-          },
-        };
-      } else {
-        options = {
-          ...base,
-          order_id: data.orderId,
-          amount: data.amount * 100,
-          currency: data.currency,
-          handler: async (res) => {
-            try {
-              await api.post("/subscription/verify-payment", {
-                razorpay_order_id: res.razorpay_order_id,
-                razorpay_payment_id: res.razorpay_payment_id,
-                razorpay_signature: res.razorpay_signature,
-              });
-              setMsg(`${data.tier} is now active!`);
-              load();
-              onChange();
-            } catch (e) {
-              setMsg(formatApiError(e.response?.data?.detail));
-            }
-          },
-        };
-      }
-      new window.Razorpay(options).open();
+
+      const rzp = new window.Razorpay(options);
+      rzp.on("payment.failed", function (response) {
+        setErrorMsg(response.error?.description || "Payment failed. Please try again.");
+        setSubscribing(null);
+      });
+      rzp.open();
     } catch (e) {
-      setMsg(formatApiError(e.response?.data?.detail));
+      setErrorMsg(formatApiError(e.response?.data?.detail) || "Failed to start checkout. Please try again.");
+      setSubscribing(null);
     }
   };
 
   const simulate = async (status) => {
+    setErrorMsg("");
     await api.post("/subscription/simulate", { status });
-    setMsg(`(Sandbox Test) Subscription status switched to: ${status}`);
-    load();
-    onChange();
+    setSuccessMsg(`(Sandbox Test) Subscription status switched to: ${status}`);
+    await load();
+    if (checkAuth) await checkAuth();
+    if (onChange) onChange();
   };
 
   const active = (sub?.subscriptionStatus || user?.subscriptionStatus) === "active";
@@ -1198,8 +1215,14 @@ function SubscriptionSection({ user, onChange }) {
               </li>
             </ul>
             <div className="mt-6">
-              <Btn variant="outline" data-testid="sub-monthly-btn" onClick={() => subscribe("monthly")} className="w-full">
-                {active ? "Switch to Monthly (₹199/mo)" : "Upgrade to Pro Monthly (₹199)"}
+              <Btn 
+                variant="outline" 
+                data-testid="sub-monthly-btn" 
+                disabled={Boolean(subscribing)}
+                onClick={() => subscribe("monthly")} 
+                className="w-full"
+              >
+                {subscribing === "monthly" ? "Opening Checkout…" : active ? "Switch to Monthly (₹199/mo)" : "Upgrade to Pro Monthly (₹199)"}
               </Btn>
             </div>
           </div>
@@ -1227,8 +1250,14 @@ function SubscriptionSection({ user, onChange }) {
               </li>
             </ul>
             <div className="mt-6">
-              <Btn variant="primary" data-testid="sub-yearly-btn" onClick={() => subscribe("yearly")} className="w-full">
-                Upgrade Annual (₹1,499/yr)
+              <Btn 
+                variant="primary" 
+                data-testid="sub-yearly-btn" 
+                disabled={Boolean(subscribing)}
+                onClick={() => subscribe("yearly")} 
+                className="w-full"
+              >
+                {subscribing === "yearly" ? "Opening Checkout…" : "Upgrade Annual (₹1,499/yr)"}
               </Btn>
             </div>
           </div>
@@ -1256,7 +1285,8 @@ function SubscriptionSection({ user, onChange }) {
           </div>
         </div>
 
-        {msg && <Note tone="success">{msg}</Note>}
+        {errorMsg && <Note tone="error">{errorMsg}</Note>}
+        {successMsg && <Note tone="success">{successMsg}</Note>}
       </div>
     </Panel>
   );
