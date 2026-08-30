@@ -45,6 +45,7 @@ COPY --from=frontend-builder /app/backend/node_modules ./backend/node_modules
 # Environment & Port
 ENV PORT=8000
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH="/app/backend:/app"
 EXPOSE 8000
 
 # Start FastAPI application

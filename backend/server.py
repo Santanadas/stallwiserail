@@ -1,8 +1,10 @@
-from dotenv import load_dotenv
-from pathlib import Path
 import os
+import sys
+from pathlib import Path
+from dotenv import load_dotenv
 
-ROOT_DIR = Path(__file__).parent
+ROOT_DIR = Path(__file__).parent.resolve()
+sys.path.insert(0, str(ROOT_DIR))
 load_dotenv(ROOT_DIR / ".env")
 
 import re
