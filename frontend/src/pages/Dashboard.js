@@ -303,13 +303,6 @@ function RouteSection({ onChange }) {
               </div>
             </div>
 
-            {route.mode === "mock" && (
-              <div className="mt-4 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-800" data-testid="route-mock-note">
-                <Sparkles className="h-4 w-4 shrink-0 text-amber-600" />
-                <span>Simulated Mode Active — Payouts flow in test sandbox mode. Ready for production credentials anytime.</span>
-              </div>
-            )}
-
             <div className="mt-5 flex justify-end">
               <Btn variant="danger" data-testid="route-disconnect-btn" onClick={disconnect}>
                 Disconnect Account
@@ -1164,15 +1157,6 @@ function SubscriptionSection({ onChange }) {
     }
   };
 
-  const simulate = async (status) => {
-    setErrorMsg("");
-    await api.post("/subscription/simulate", { status });
-    setSuccessMsg(`(Sandbox Test) Subscription status switched to: ${status}`);
-    await load();
-    if (checkAuth) await checkAuth();
-    if (onChange) onChange();
-  };
-
   const active = (sub?.subscriptionStatus || user?.subscriptionStatus) === "active";
 
   return (
@@ -1262,28 +1246,6 @@ function SubscriptionSection({ onChange }) {
                 {subscribing === "yearly" ? "Opening Checkout…" : "Upgrade Annual (₹1,499/yr)"}
               </Btn>
             </div>
-          </div>
-        </div>
-
-        {/* Sandbox Simulator */}
-        <div className="flex items-center justify-between rounded-xl border border-neutral-200 bg-neutral-50/60 p-4">
-          <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">Developer Testing Sandbox</span>
-          <div className="flex items-center gap-2">
-            <button
-              data-testid="sub-activate-btn"
-              onClick={() => simulate("active")}
-              className="text-xs font-bold text-neutral-600 hover:text-[#FF4F00] underline"
-            >
-              Simulate Active
-            </button>
-            <span className="text-neutral-300">·</span>
-            <button
-              data-testid="sub-cancel-btn"
-              onClick={() => simulate("inactive")}
-              className="text-xs font-bold text-neutral-600 hover:text-[#FF4F00] underline"
-            >
-              Simulate Free
-            </button>
           </div>
         </div>
 

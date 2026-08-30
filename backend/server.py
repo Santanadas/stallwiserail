@@ -177,10 +177,6 @@ class ResendOtpIn(BaseModel):
     otp_id: str
 
 
-class SubSimIn(BaseModel):
-    status: str  # active | inactive
-
-
 class SubCreateIn(BaseModel):
     interval: str  # monthly | yearly
 
@@ -1347,14 +1343,6 @@ async def verify_subscription_payment(body: PayVerifyIn, user=Depends(get_curren
         "subscriptionInterval": interval,
         "subscriptionExpiresAt": expires_at,
     }
-
-
-@api.post("/subscription/simulate")
-async def subscription_simulate(body: SubSimIn, user=Depends(get_current_user)):
-    if body.status not in ("active", "inactive"):
-        raise HTTPException(status_code=400, detail="status must be active or inactive")
-    await db.execute("UPDATE users SET subscription_status = $1 WHERE user_id = $2", body.status, user["user_id"])
-    return {"subscriptionStatus": body.status}
 
 
 @app.api_route("/health", methods=["GET", "HEAD"])

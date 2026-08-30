@@ -168,7 +168,7 @@ export default function BuyerOrder() {
         {order.status === "placed" && (
           <div className="mt-6">
             <Btn variant="primary" data-testid="buyer-pay-btn" onClick={pay} disabled={busy}>
-              <CreditCard className="h-4 w-4" /> {order.mockPayment ? "Simulate payment (MOCK)" : "Pay with Razorpay"}
+              <CreditCard className="h-4 w-4" /> Pay with Razorpay
             </Btn>
           </div>
         )}
