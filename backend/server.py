@@ -1112,8 +1112,8 @@ _PLAN_SPECS = {
 
 
 def platform_rp_client():
-    kid = os.environ.get("RAZORPAY_PLATFORM_KEY_ID")
-    ksec = os.environ.get("RAZORPAY_PLATFORM_KEY_SECRET")
+    kid = os.environ.get("RAZORPAY_KEY_ID") or os.environ.get("RAZORPAY_PLATFORM_KEY_ID")
+    ksec = os.environ.get("RAZORPAY_KEY_SECRET") or os.environ.get("RAZORPAY_PLATFORM_KEY_SECRET")
     if not kid or not ksec:
         raise HTTPException(status_code=503, detail="Platform billing is not configured yet")
     return razorpay.Client(auth=(kid, ksec)), kid
@@ -1136,12 +1136,13 @@ async def ensure_plan(rc, interval):
 @api.get("/subscription")
 async def get_subscription(user=Depends(get_current_user)):
     status = await effective_sub_status(user)
+    kid = os.environ.get("RAZORPAY_KEY_ID") or os.environ.get("RAZORPAY_PLATFORM_KEY_ID")
     return {
         "subscriptionStatus": status,
         "premiumTier": PREMIUM_TIER, "freeTier": FREE_TIER,
         "plans": {"monthly": PRO_MONTHLY_AMOUNT, "yearly": PRO_YEARLY_AMOUNT},
         "currency": SUB_CURRENCY,
-        "billingConfigured": bool(os.environ.get("RAZORPAY_PLATFORM_KEY_ID")),
+        "billingConfigured": bool(kid),
         "subscriptionId": user.get("subscriptionId"),
         "subscriptionInterval": user.get("subscriptionInterval"),
         "subscriptionExpiresAt": user.get("subscriptionExpiresAt"),
