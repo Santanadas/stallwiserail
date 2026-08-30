@@ -1355,6 +1355,39 @@ export default function Dashboard() {
     };
   }, [orders, orderCount]);
 
+  // Real 7-Day Performance Trend
+  const performance7Days = useMemo(() => {
+    const days = [];
+    const now = new Date();
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().split("T")[0];
+      const dayLabel = i === 0 ? "Today" : i === 1 ? "Yesterday" : d.toLocaleDateString("en-US", { weekday: "short" });
+
+      const dayOrders = orders.filter((o) => {
+        if (!o.created_at) return false;
+        try {
+          const od = new Date(o.created_at).toISOString().split("T")[0];
+          return od === dateStr;
+        } catch {
+          return false;
+        }
+      });
+
+      const revenue = dayOrders.reduce((sum, o) => sum + (o.amount || 0), 0);
+      days.push({
+        date: dateStr,
+        label: dayLabel,
+        orders: dayOrders.length,
+        revenue,
+      });
+    }
+
+    const maxRev = Math.max(...days.map((d) => d.revenue), 100);
+    return { days, maxRev };
+  }, [orders]);
+
   if (!user) return null;
 
   return (
@@ -1640,14 +1673,15 @@ export default function Dashboard() {
                   <div className="flex items-center justify-between border-b border-neutral-100 pb-4">
                     <div>
                       <h3 className="font-bold text-[#0A0A0A] text-base">Store Performance Trend</h3>
-                      <p className="text-xs text-neutral-500">Gross volume and order velocity</p>
+                      <p className="text-xs text-neutral-500">Live 7-day gross sales volume & order count</p>
                     </div>
-                    <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-bold text-neutral-700">
-                      Live Velocity
+                    <span className="rounded-full bg-emerald-50 border border-emerald-200 px-3 py-1 text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      Live Data
                     </span>
                   </div>
 
-                  {/* Visual SVG Activity Graph */}
+                  {/* Visual SVG Activity Graph with Real Points */}
                   <div className="my-6">
                     <div className="relative h-44 w-full">
                       <svg className="h-full w-full overflow-visible" viewBox="0 0 500 150">
@@ -1657,37 +1691,77 @@ export default function Dashboard() {
                             <stop offset="100%" stopColor="#FF4F00" stopOpacity="0.0" />
                           </linearGradient>
                         </defs>
-                        {/* Grid lines */}
-                        <line x1="0" y1="30" x2="500" y2="30" stroke="#f1f5f9" strokeWidth="1" />
-                        <line x1="0" y1="75" x2="500" y2="75" stroke="#f1f5f9" strokeWidth="1" />
+                        {/* Horizontal Grid lines */}
+                        <line x1="0" y1="30" x2="500" y2="30" stroke="#f1f5f9" strokeWidth="1" strokeDasharray="3 3" />
+                        <line x1="0" y1="75" x2="500" y2="75" stroke="#f1f5f9" strokeWidth="1" strokeDasharray="3 3" />
                         <line x1="0" y1="120" x2="500" y2="120" stroke="#f1f5f9" strokeWidth="1" />
 
-                        {/* Area fill */}
-                        <path
-                          d="M 0 130 Q 80 110, 160 85 T 320 50 T 500 20 L 500 150 L 0 150 Z"
-                          fill="url(#chartGradient)"
-                        />
-                        {/* Trend line */}
-                        <path
-                          d="M 0 130 Q 80 110, 160 85 T 320 50 T 500 20"
-                          fill="none"
-                          stroke="#FF4F00"
-                          strokeWidth="3.5"
-                          strokeLinecap="round"
-                        />
-                        {/* Data points */}
-                        <circle cx="160" cy="85" r="5" fill="#FF4F00" stroke="#ffffff" strokeWidth="2" />
-                        <circle cx="320" cy="50" r="5" fill="#FF4F00" stroke="#ffffff" strokeWidth="2" />
-                        <circle cx="500" cy="20" r="6" fill="#0A0A0A" stroke="#FF4F00" strokeWidth="2.5" />
+                        {(() => {
+                          const pts = performance7Days.days.map((d, idx) => {
+                            const x = Math.round((idx / 6) * 500);
+                            const ratio = performance7Days.maxRev > 0 ? d.revenue / performance7Days.maxRev : 0;
+                            const y = Math.round(120 - ratio * 90);
+                            return { x, y, ...d };
+                          });
+
+                          const pathD = pts.reduce((acc, p, idx) => {
+                            return idx === 0 ? `M ${p.x} ${p.y}` : `${acc} L ${p.x} ${p.y}`;
+                          }, "");
+
+                          const fillD = `${pathD} L 500 120 L 0 120 Z`;
+
+                          return (
+                            <>
+                              {/* Area fill */}
+                              <path d={fillD} fill="url(#chartGradient)" />
+                              {/* Trend line */}
+                              <path
+                                d={pathD}
+                                fill="none"
+                                stroke="#FF4F00"
+                                strokeWidth="3"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                              {/* Data points */}
+                              {pts.map((p, idx) => (
+                                <g key={idx} className="group cursor-pointer">
+                                  <circle
+                                    cx={p.x}
+                                    cy={p.y}
+                                    r={idx === 6 ? 6 : 4.5}
+                                    fill={idx === 6 ? "#0A0A0A" : "#FF4F00"}
+                                    stroke="#ffffff"
+                                    strokeWidth="2"
+                                  />
+                                </g>
+                              ))}
+                            </>
+                          );
+                        })()}
                       </svg>
                     </div>
 
-                    <div className="flex items-center justify-between text-xs font-bold text-neutral-400 pt-2 border-t border-neutral-100">
-                      <span>7 Days Ago</span>
-                      <span>5 Days Ago</span>
-                      <span>3 Days Ago</span>
-                      <span>Yesterday</span>
-                      <span className="text-[#0A0A0A] font-black">Today</span>
+                    {/* Day-by-Day Real Metric Cards */}
+                    <div className="grid grid-cols-7 gap-1 pt-3 border-t border-neutral-100 text-center">
+                      {performance7Days.days.map((d, idx) => (
+                        <div
+                          key={idx}
+                          className={`rounded-lg p-1.5 transition-colors ${
+                            idx === 6 ? "bg-neutral-900 text-white" : "hover:bg-neutral-50 text-neutral-600"
+                          }`}
+                        >
+                          <span className={`block text-[10px] font-bold ${idx === 6 ? "text-neutral-300" : "text-neutral-400"}`}>
+                            {d.label}
+                          </span>
+                          <span className={`block text-xs font-black mt-0.5 ${idx === 6 ? "text-white" : "text-[#0A0A0A]"}`}>
+                            ₹{d.revenue.toLocaleString()}
+                          </span>
+                          <span className={`block text-[9px] ${idx === 6 ? "text-emerald-400" : "text-neutral-400"}`}>
+                            {d.orders} ord
+                          </span>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>
