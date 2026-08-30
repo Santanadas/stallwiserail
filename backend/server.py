@@ -36,6 +36,8 @@ FREE_TIER = "Community"
 DEFAULT_WINDOW_MIN = 120
 OTP_EXPIRY_MIN = 4320  # 3 days
 OTP_MAX_ATTEMPTS = 5
+AUTH_OTP_EXPIRY_MIN = 10
+AUTH_OTP_MAX_ATTEMPTS = 5
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("marketo")
@@ -161,6 +163,15 @@ class OtpIn(BaseModel):
     otp: str = Field(min_length=4, max_length=12)
 
 
+class VerifyOtpIn(BaseModel):
+    otp_id: str = Field(min_length=1, max_length=64)
+    otp: str = Field(min_length=6, max_length=6)
+
+
+class ResendOtpIn(BaseModel):
+    otp_id: str = Field(min_length=1, max_length=64)
+
+
 class DisputeIn(BaseModel):
     reason: str = Field(min_length=3, max_length=1000)
 
@@ -180,11 +191,17 @@ class PayVerifyIn(BaseModel):
 
 
 # ======================= Auth helpers =======================
+_IS_DEV = FRONTEND_URL.startswith("http://localhost") or FRONTEND_URL.startswith("http://127.0.0.1")
+_COOKIE_SECURE = not _IS_DEV
+_COOKIE_SAMESITE = "lax" if _IS_DEV else "none"
+
+
 def set_jwt_cookies(resp: Response, user_id: str, email: str):
+    # 6-month (180 days) access token, 1-year (365 days) refresh token for persistent sessions
     resp.set_cookie("access_token", security.create_access_token(user_id, email),
-                    httponly=True, secure=True, samesite="none", max_age=3600, path="/")
+                    httponly=True, secure=_COOKIE_SECURE, samesite=_COOKIE_SAMESITE, max_age=15552000, path="/")
     resp.set_cookie("refresh_token", security.create_refresh_token(user_id),
-                    httponly=True, secure=True, samesite="none", max_age=604800, path="/")
+                    httponly=True, secure=_COOKIE_SECURE, samesite=_COOKIE_SAMESITE, max_age=31536000, path="/")
 
 
 def public_user(u: dict) -> dict:
@@ -229,6 +246,30 @@ async def get_current_user(request: Request) -> dict:
     raise HTTPException(status_code=401, detail="Not authenticated")
 
 
+# ======================= Auth OTP helper =======================
+async def _create_auth_otp(user_id: str, email: str, name: str, purpose: str) -> dict:
+    """Generate a 6-digit OTP for auth verification, store it, and email it."""
+    otp = security.generate_otp()
+    otp_id = new_id("otp")
+    await db.pending_otps.insert_one({
+        "otp_id": otp_id,
+        "user_id": user_id,
+        "email": email,
+        "otp_hash": security.hash_otp(otp),
+        "purpose": purpose,  # "register" or "login"
+        "attempts": 0,
+        "locked": False,
+        "created_at": iso(now()),
+        "expires_at": iso(now() + timedelta(minutes=AUTH_OTP_EXPIRY_MIN)),
+    })
+    try:
+        await email_service.send_auth_otp_email(email, name, otp)
+    except Exception as e:
+        logger.error(f"auth OTP email failed: {e}")
+    logger.info(f"Auth OTP for {email} ({purpose}): {otp}")
+    return {"otp_id": otp_id}
+
+
 # ======================= Auth routes =======================
 @api.post("/auth/register")
 async def register(body: RegisterIn, request: Request, response: Response):
@@ -247,8 +288,8 @@ async def register(body: RegisterIn, request: Request, response: Response):
         "subscriptionStatus": "inactive", "created_at": iso(now()),
     }
     await db.users.insert_one(doc)
-    set_jwt_cookies(response, user_id, email)
-    return public_user(doc)
+    otp_info = await _create_auth_otp(user_id, email, clean_name, "register")
+    return {"pendingOtp": True, "email": email, "otpId": otp_info["otp_id"]}
 
 
 @api.post("/auth/login")
@@ -269,8 +310,57 @@ async def login(body: LoginIn, request: Request, response: Response):
         )
         raise HTTPException(status_code=401, detail="Invalid email or password")
     await db.login_attempts.delete_one({"identifier": ident})
-    set_jwt_cookies(response, user["user_id"], email)
+    otp_info = await _create_auth_otp(user["user_id"], email, user.get("name", ""), "login")
+    return {"pendingOtp": True, "email": email, "otpId": otp_info["otp_id"]}
+
+
+@api.post("/auth/verify-otp")
+async def verify_auth_otp(body: VerifyOtpIn, request: Request, response: Response):
+    client_ip = request.client.host if request.client else "unknown"
+    if not security.check_rate_limit(f"auth_otp:{client_ip}", max_requests=20, window_seconds=60):
+        raise HTTPException(status_code=429, detail="Too many verification attempts. Please wait.")
+    rec = await db.pending_otps.find_one({"otp_id": body.otp_id})
+    if not rec:
+        raise HTTPException(status_code=400, detail="Invalid or expired verification session")
+    if rec.get("locked"):
+        raise HTTPException(status_code=423, detail="Too many failed attempts. Please request a new code.")
+    exp = parse_dt(rec.get("expires_at"))
+    if exp and now() > exp:
+        raise HTTPException(status_code=400, detail="Code expired. Please request a new one.")
+    if not security.verify_otp(body.otp.strip(), rec["otp_hash"]):
+        attempts = rec.get("attempts", 0) + 1
+        locked = attempts >= AUTH_OTP_MAX_ATTEMPTS
+        await db.pending_otps.update_one(
+            {"otp_id": body.otp_id},
+            {"$set": {"attempts": attempts, "locked": locked}},
+        )
+        if locked:
+            raise HTTPException(status_code=423, detail="Too many failed attempts. Please request a new code.")
+        raise HTTPException(status_code=400, detail=f"Invalid code ({attempts}/{AUTH_OTP_MAX_ATTEMPTS} attempts)")
+    # OTP verified — issue JWT cookies
+    user = await db.users.find_one({"user_id": rec["user_id"]}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    await db.pending_otps.delete_one({"otp_id": body.otp_id})
+    set_jwt_cookies(response, user["user_id"], user["email"])
     return public_user(user)
+
+
+@api.post("/auth/resend-otp")
+async def resend_auth_otp(body: ResendOtpIn, request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    if not security.check_rate_limit(f"resend_otp:{client_ip}", max_requests=5, window_seconds=300):
+        raise HTTPException(status_code=429, detail="Too many resend attempts. Please wait a few minutes.")
+    rec = await db.pending_otps.find_one({"otp_id": body.otp_id})
+    if not rec:
+        raise HTTPException(status_code=400, detail="Invalid verification session")
+    user = await db.users.find_one({"user_id": rec["user_id"]}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid verification session")
+    # Delete old and create fresh OTP
+    await db.pending_otps.delete_one({"otp_id": body.otp_id})
+    otp_info = await _create_auth_otp(user["user_id"], user["email"], user.get("name", ""), rec.get("purpose", "login"))
+    return {"ok": True, "otpId": otp_info["otp_id"], "message": "A new code has been sent to your email."}
 
 
 @api.post("/auth/logout")
@@ -360,10 +450,10 @@ async def google_session(body: GoogleSessionIn, response: Response):
     session_token = data["session_token"]
     await db.user_sessions.insert_one({
         "user_id": user["user_id"], "session_token": session_token,
-        "expires_at": iso(now() + timedelta(days=7)), "created_at": iso(now()),
+        "expires_at": iso(now() + timedelta(days=365)), "created_at": iso(now()),
     })
     response.set_cookie("session_token", session_token, httponly=True, secure=True,
-                        samesite="none", max_age=604800, path="/")
+                        samesite="none", max_age=31536000, path="/")
     return public_user(user)
 
 
@@ -490,6 +580,12 @@ async def upload_image(file: UploadFile = File(...), kind: str = Query("product"
     if kind == "avatar":
         await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"avatar": stored}})
     return {"path": stored, "url": f"/api/files/{stored}"}
+
+
+@api.delete("/uploads/avatar")
+async def delete_avatar(user=Depends(get_current_user)):
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"avatar": None}})
+    return {"ok": True}
 
 
 @api.get("/files/{path:path}")
@@ -1148,9 +1244,31 @@ async def root():
 
 app.include_router(api)
 
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+# Production static assets mounting for single-service Railway deployment
+DIST_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dist"))
+if os.path.isdir(DIST_DIR):
+    assets_dir = os.path.join(DIST_DIR, "assets")
+    if os.path.isdir(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        if full_path.startswith("api") or full_path.startswith("uploads"):
+            raise HTTPException(status_code=404, detail="Not found")
+        file_path = os.path.join(DIST_DIR, full_path)
+        if os.path.isfile(file_path):
+            return FileResponse(file_path)
+        index_file = os.path.join(DIST_DIR, "index.html")
+        if os.path.isfile(index_file):
+            return FileResponse(index_file)
+        raise HTTPException(status_code=404, detail="Not found")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_URL, "http://localhost:3000"],
+    allow_origins=[FRONTEND_URL, "http://localhost:3000", "*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1169,6 +1287,8 @@ async def seed():
     await db.user_sessions.create_index("session_token")
     await db.seller_routes.create_index("sellerId", unique=True)
     await db.files.create_index("storage_path")
+    await db.pending_otps.create_index("otp_id", unique=True)
+    await db.pending_otps.create_index("expires_at", expireAfterSeconds=0)
 
     async def ensure_seller(email, password, name, slug, store_name):
         u = await db.users.find_one({"email": email})

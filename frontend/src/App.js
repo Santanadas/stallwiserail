@@ -5,7 +5,6 @@ import AuthCallback from "@/components/AuthCallback";
 import Landing from "@/pages/Landing";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
-import VerifyEmail from "@/pages/VerifyEmail";
 import ForgotPassword from "@/pages/ForgotPassword";
 import ResetPassword from "@/pages/ResetPassword";
 import Dashboard from "@/pages/Dashboard";
@@ -22,9 +21,6 @@ function Protected({ children }) {
   const { user, loading } = useAuth();
   if (loading) return <div style={{ padding: 40 }}>Loading…</div>;
   if (!user) return <Navigate to="/login" replace />;
-  if (user.authProvider === "password" && user.emailVerified === false) {
-    return <Navigate to="/verify-email" replace />;
-  }
   return children;
 }
 
@@ -40,7 +36,6 @@ function AppRoutes() {
       <Route path="/contact" element={<Contact />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
-      <Route path="/verify-email" element={<VerifyEmail />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />

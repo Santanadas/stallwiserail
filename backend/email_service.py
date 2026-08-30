@@ -87,22 +87,59 @@ def _assert_safe_email(subject: str, html: str) -> None:
                 raise ValueError(f"Anchor text {m.group(1)!r} != real link host {real!r} (G3)")
 
 
+import json
+import asyncio
+from pathlib import Path
+
+MAILER_SCRIPT = Path(__file__).parent / "mailer.js"
+
+
 async def send_email(*, to: str, subject: str, html: str) -> str | None:
     _assert_safe_email(subject, html)
-    payload = {"to": [to], "subject": subject, "html": html, "from_name": EMAIL_FROM_NAME}
+    payload = {
+        "to": to,
+        "subject": subject,
+        "html": html,
+        "fromName": EMAIL_FROM_NAME,
+    }
     if EMAIL_REPLY_TO:
-        payload["contact_email"] = EMAIL_REPLY_TO
+        payload["replyTo"] = EMAIL_REPLY_TO
+
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                f"{EMAIL_BASE_URL}/api/v1/email/send",
-                headers={"X-Email-Key": EMAIL_KEY},
-                json=payload,
-            )
-        resp.raise_for_status()
-        return resp.json().get("id")
+        proc = await asyncio.create_subprocess_exec(
+            "node",
+            str(MAILER_SCRIPT),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate(input=json.dumps(payload).encode("utf-8"))
+
+        if proc.returncode != 0:
+            err_msg = stderr.decode("utf-8").strip() or stdout.decode("utf-8").strip()
+            logger.error(f"Nodemailer failed (exit code {proc.returncode}): {err_msg}")
+            return None
+
+        # Parse stdout JSON
+        out_text = stdout.decode("utf-8").strip()
+        # Find json object in stdout if there are any trailing lines
+        json_start = out_text.rfind("{")
+        if json_start != -1:
+            res = json.loads(out_text[json_start:])
+            if res.get("ok"):
+                msg_id = res.get("messageId")
+                preview_url = res.get("previewUrl")
+                if preview_url:
+                    logger.info(f"Email sent via Nodemailer (test preview): {preview_url}")
+                else:
+                    logger.info(f"Email sent via Nodemailer: {msg_id}")
+                return msg_id
+            else:
+                logger.error(f"Nodemailer error: {res.get('error')}")
+                return None
+        return "sent"
     except Exception as e:
-        logger.error(f"Email send error: {str(e)}")
+        logger.error(f"Nodemailer execution error: {str(e)}")
         return None
 
 
@@ -147,4 +184,21 @@ async def send_reset_email(email, reset_link):
         f'<p><a href="{escape(reset_link)}">Reset your password</a></p>'
         f"<p>This link expires in 1 hour. If you did not request this, ignore this email.</p>"
     )
-    return await send_email(to=email, subject=f"Reset your {EMAIL_FROM_NAME} password", html=_wrap(inner))
+    return await send_email(to=email, subject=f"Reset your {escape(EMAIL_FROM_NAME)} password", html=_wrap(inner))
+
+
+async def send_auth_otp_email(email, name, otp):
+    inner = (
+        f"<p>Hi {escape(name or 'there')},</p>"
+        f"<p>Your verification code for {escape(EMAIL_FROM_NAME)} is:</p>"
+        f'<p style="font-size:32px;font-weight:bold;letter-spacing:6px;'
+        f'text-align:center;padding:16px 0;color:#FF4F00">{escape(otp)}</p>'
+        f"<p>Enter this code to complete your sign-in. "
+        f"This code expires in <strong>10 minutes</strong>.</p>"
+        f"<p>If you didn't request this, you can safely ignore this email.</p>"
+    )
+    return await send_email(
+        to=email,
+        subject=f"Your {EMAIL_FROM_NAME} verification code: {otp}",
+        html=_wrap(inner),
+    )

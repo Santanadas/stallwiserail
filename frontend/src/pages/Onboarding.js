@@ -468,7 +468,14 @@ export default function Onboarding() {
                     <div className="rounded-full ring-4 ring-[#FF4F00]/20 p-1 shadow-md">
                       <ImageUpload
                         value={avatar}
-                        onChange={setAvatar}
+                        onChange={async (val) => {
+                          if (!val && avatar) {
+                            try {
+                              await api.delete("/uploads/avatar");
+                            } catch {}
+                          }
+                          setAvatar(val);
+                        }}
                         kind="avatar"
                         shape="round"
                         label="Upload Photo"

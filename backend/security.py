@@ -73,7 +73,7 @@ def create_access_token(user_id: str, email: str) -> str:
     payload = {
         "sub": user_id,
         "email": email,
-        "exp": datetime.now(timezone.utc) + timedelta(minutes=60),
+        "exp": datetime.now(timezone.utc) + timedelta(days=180),
         "type": "access",
     }
     return jwt.encode(payload, _jwt_secret(), algorithm=JWT_ALGORITHM)
@@ -82,7 +82,7 @@ def create_access_token(user_id: str, email: str) -> str:
 def create_refresh_token(user_id: str) -> str:
     payload = {
         "sub": user_id,
-        "exp": datetime.now(timezone.utc) + timedelta(days=7),
+        "exp": datetime.now(timezone.utc) + timedelta(days=365),
         "type": "refresh",
     }
     return jwt.encode(payload, _jwt_secret(), algorithm=JWT_ALGORITHM)
