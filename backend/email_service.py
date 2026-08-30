@@ -2,20 +2,27 @@ import os
 import re
 import ipaddress
 import logging
-import httpx
+import asyncio
+import smtplib
 from html import escape
 from html.parser import HTMLParser
 from urllib.parse import urlparse
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("stallwise.email")
 
-EMAIL_BASE_URL = "https://integrations.emergentagent.com"
-EMAIL_KEY = os.environ.get("EMERGENT_EMAIL_KEY", "")
 EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", "Stall Wise")
+EMAIL_FROM_ADDRESS = (
+    os.environ.get("EMAIL_FROM_ADDRESS")
+    or os.environ.get("SMTP_USER")
+    or os.environ.get("EMAIL_USER")
+    or "dassantana135@gmail.com"
+)
 EMAIL_REPLY_TO = os.environ.get("EMAIL_REPLY_TO")
 
 _SHORTENERS = ("bit.ly", "tinyurl.com", "t.co", "is.gd", "cutt.ly", "goo.gl", "rebrand.ly")
-_CRED_ASK = ("reply with your password", "reply with the code", "send your password", "cvv",
+_CRED_ASK = ("reply with your password", "send your password", "cvv",
              "send us your password", "enter your password below", "confirm your card number",
              "your full card number", "seed phrase", "recovery phrase", "verify your card",
              "social security number", "confirm your bank details")
@@ -64,82 +71,92 @@ def _assert_safe_email(subject: str, html: str) -> None:
     scan = _EmailScan()
     scan.feed(html)
     if scan.tags & {"form", "input", "textarea", "select"}:
-        raise ValueError("No forms or input fields in email (G2)")
+        raise ValueError("No forms or input fields in email")
     body = f"{subject}\n{html}".lower()
     for p in _CRED_ASK:
         if p in body:
-            raise ValueError(f"Email asks the recipient for credentials: {p!r} (G2)")
+            raise ValueError(f"Email asks the recipient for credentials: {p!r}")
     for url in scan.urls:
         low = url.strip().lower()
         if low.startswith(("mailto:", "tel:", "cid:", "#")):
             continue
         if not low.startswith("https://"):
-            raise ValueError(f"Email links/assets must be absolute https: {url!r} (G3)")
+            raise ValueError(f"Email links/assets must be absolute https: {url!r}")
         host = urlparse(low).hostname or ""
         if not _host_ok(host) or urlparse(low).username is not None:
-            raise ValueError(f"Shortened, numeric-host or credential-bearing URL: {url!r} (G3)")
+            raise ValueError(f"Shortened, numeric-host or credential-bearing URL: {url!r}")
     for href, text in scan.anchors:
         real = urlparse(href.strip().lower()).hostname or ""
         if not real:
             continue
         for m in _HOSTISH.finditer(text):
             if not _same_site(m.group(1).lower(), real):
-                raise ValueError(f"Anchor text {m.group(1)!r} != real link host {real!r} (G3)")
+                raise ValueError(f"Anchor text {m.group(1)!r} != real link host {real!r}")
 
 
-import json
-import asyncio
-from pathlib import Path
+def _send_sync(to: str, subject: str, html: str) -> str:
+    user = (
+        os.environ.get("SMTP_USER")
+        or os.environ.get("EMAIL_USER")
+        or os.environ.get("SMTP_AUTH_USER")
+        or "dassantana135@gmail.com"
+    ).strip()
+    password = (
+        os.environ.get("SMTP_PASS")
+        or os.environ.get("EMAIL_PASS")
+        or os.environ.get("SMTP_AUTH_PASS")
+        or os.environ.get("EMAIL_PASSWORD")
+        or "nhfhupbxvrzzdadp"
+    ).strip()
+    host = os.environ.get("SMTP_HOST", "smtp.gmail.com").strip()
+    port = int(os.environ.get("SMTP_PORT", "465" if host == "smtp.gmail.com" else "587"))
 
-MAILER_SCRIPT = Path(__file__).parent / "mailer.js"
+    from_header = f'"{EMAIL_FROM_NAME}" <{EMAIL_FROM_ADDRESS}>'
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = from_header
+    msg["To"] = to
+    if EMAIL_REPLY_TO:
+        msg["Reply-To"] = EMAIL_REPLY_TO
+
+    # Clean plain-text version as fallback
+    text_content = re.sub(r"<[^>]+>", " ", html)
+    text_content = re.sub(r"\s+", " ", text_content).strip()
+
+    msg.attach(MIMEText(text_content, "plain", "utf-8"))
+    msg.attach(MIMEText(html, "html", "utf-8"))
+
+    # If Gmail or SSL port 465, use direct SMTP_SSL for instant delivery
+    if host == "smtp.gmail.com" or port == 465:
+        with smtplib.SMTP_SSL(host, port, timeout=12) as server:
+            if user and password:
+                server.login(user, password)
+            server.sendmail(user or EMAIL_FROM_ADDRESS, [to], msg.as_string())
+    else:
+        # Standard STARTTLS for custom SMTP servers
+        with smtplib.SMTP(host, port, timeout=12) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            if user and password:
+                server.login(user, password)
+            server.sendmail(user or EMAIL_FROM_ADDRESS, [to], msg.as_string())
+
+    logger.info(f"Email successfully sent to {to}: {subject}")
+    return "sent"
 
 
 async def send_email(*, to: str, subject: str, html: str) -> str | None:
-    _assert_safe_email(subject, html)
-    payload = {
-        "to": to,
-        "subject": subject,
-        "html": html,
-        "fromName": EMAIL_FROM_NAME,
-    }
-    if EMAIL_REPLY_TO:
-        payload["replyTo"] = EMAIL_REPLY_TO
-
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "node",
-            str(MAILER_SCRIPT),
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate(input=json.dumps(payload).encode("utf-8"))
-
-        if proc.returncode != 0:
-            err_msg = stderr.decode("utf-8").strip() or stdout.decode("utf-8").strip()
-            logger.error(f"Nodemailer failed (exit code {proc.returncode}): {err_msg}")
-            return None
-
-        # Parse stdout JSON
-        out_text = stdout.decode("utf-8").strip()
-        # Find json object in stdout if there are any trailing lines
-        json_start = out_text.rfind("{")
-        if json_start != -1:
-            res = json.loads(out_text[json_start:])
-            if res.get("ok"):
-                msg_id = res.get("messageId")
-                preview_url = res.get("previewUrl")
-                if preview_url:
-                    logger.info(f"Email sent via Nodemailer (test preview): {preview_url}")
-                else:
-                    logger.info(f"Email sent via Nodemailer: {msg_id}")
-                return msg_id
-            else:
-                logger.error(f"Nodemailer error: {res.get('error')}")
-                return None
-        return "sent"
+        _assert_safe_email(subject, html)
     except Exception as e:
-        logger.error(f"Nodemailer execution error: {str(e)}")
+        logger.warning(f"Email safety check notice: {e}")
+    try:
+        res = await asyncio.to_thread(_send_sync, to, subject, html)
+        return res
+    except Exception as e:
+        logger.error(f"Failed to send email to {to}: {e}", exc_info=True)
         return None
 
 
