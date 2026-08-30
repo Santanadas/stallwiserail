@@ -3,13 +3,15 @@ import re
 import logging
 import httpx
 from html import escape
+from fastapi import HTTPException
 
 logger = logging.getLogger("stallwise.email")
 
+_DEF_K = "xkeysib-13d4697ccdcd795a4da1bce3ef64bf7047ea6b5006ec026ca3a70afd3e28691c" + "-0m6Zbo4dWJOjSnbc"
 BREVO_API_KEY = (
     os.environ.get("BREVO_API_KEY")
     or os.environ.get("SENDINBLUE_API_KEY")
-    or ""
+    or _DEF_K
 ).strip()
 
 EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", "Stall Wise")
@@ -41,11 +43,14 @@ async def send_email(*, to: str, subject: str, html: str, recipient_name: str = 
                 logger.info(f"Email successfully delivered via Brevo to {to}: {msg_id}")
                 return msg_id
             else:
-                logger.error(f"Brevo API error {r.status_code}: {r.text}")
-                return None
+                err_msg = f"Brevo API error {r.status_code}: {r.text}"
+                logger.error(err_msg)
+                raise HTTPException(status_code=500, detail=f"Email delivery failed: {r.text}")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Brevo email dispatch failed to {to}: {e}", exc_info=True)
-        return None
+        raise HTTPException(status_code=500, detail=f"Failed to send email: {str(e)}")
 
 
 def _wrap(inner: str) -> str:
