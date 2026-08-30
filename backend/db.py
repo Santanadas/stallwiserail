@@ -64,23 +64,24 @@ async def init_db() -> asyncpg.Pool:
             _pool = await asyncpg.create_pool(
                 clean_url,
                 init=_init_connection,
-                min_size=2,
-                max_size=15,
+                min_size=1,
+                max_size=10,
                 ssl=ssl_context,
-                timeout=15.0,
+                timeout=10.0,
             )
         else:
             _pool = await asyncpg.create_pool(
                 clean_url,
                 init=_init_connection,
-                min_size=2,
-                max_size=15,
-                timeout=15.0,
+                min_size=1,
+                max_size=10,
+                timeout=10.0,
             )
         logger.info("Connected to PostgreSQL database pool successfully")
     except Exception as e:
-        logger.error(f"Failed to connect to PostgreSQL database: {e}")
-        raise e
+        logger.warning(f"Could not connect to PostgreSQL ({e}). Please set DATABASE_URL in your Railway variables.")
+        _pool = None
+        return None
 
     # Create tables and indexes
     async with _pool.acquire() as conn:
@@ -244,7 +245,7 @@ async def close_db():
 async def fetch_one(query: str, *args) -> Optional[Dict[str, Any]]:
     """Execute query and return single row as dict, or None."""
     if not _pool:
-        raise RuntimeError("Database pool is not initialized")
+        raise HTTPException(status_code=503, detail="Database is not connected. Please set DATABASE_URL in Railway.")
     async with _pool.acquire() as conn:
         record = await conn.fetchrow(query, *args)
         return dict(record) if record else None
@@ -253,7 +254,7 @@ async def fetch_one(query: str, *args) -> Optional[Dict[str, Any]]:
 async def fetch_all(query: str, *args) -> List[Dict[str, Any]]:
     """Execute query and return all matching rows as dicts."""
     if not _pool:
-        raise RuntimeError("Database pool is not initialized")
+        raise HTTPException(status_code=503, detail="Database is not connected. Please set DATABASE_URL in Railway.")
     async with _pool.acquire() as conn:
         records = await conn.fetch(query, *args)
         return [dict(r) for r in records]
@@ -262,7 +263,7 @@ async def fetch_all(query: str, *args) -> List[Dict[str, Any]]:
 async def fetch_val(query: str, *args) -> Any:
     """Execute query and return single scalar value."""
     if not _pool:
-        raise RuntimeError("Database pool is not initialized")
+        raise HTTPException(status_code=503, detail="Database is not connected. Please set DATABASE_URL in Railway.")
     async with _pool.acquire() as conn:
         return await conn.fetchval(query, *args)
 
@@ -270,6 +271,6 @@ async def fetch_val(query: str, *args) -> Any:
 async def execute(query: str, *args) -> str:
     """Execute query (INSERT, UPDATE, DELETE) and return status."""
     if not _pool:
-        raise RuntimeError("Database pool is not initialized")
+        raise HTTPException(status_code=503, detail="Database is not connected. Please set DATABASE_URL in Railway.")
     async with _pool.acquire() as conn:
         return await conn.execute(query, *args)
