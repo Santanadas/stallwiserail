@@ -1502,10 +1502,20 @@ export default function Dashboard() {
                 <span className="font-mono text-emerald-700">stallwise.in/{store.slug}</span>
               </div>
             )}
-          </div>
+            {/* Quick Upgrade Button if not Pro */}
+            {user?.subscriptionStatus !== "active" && (
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab("payouts");
+                  window.scrollTo({ top: 400, behavior: "smooth" });
+                }}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-[#FF4F00] to-orange-600 px-3.5 py-1.5 text-xs font-black text-white shadow-sm hover:opacity-95 hover:shadow transition-all animate-pulse"
+              >
+                <span>⚡ Upgrade Pro (₹199)</span>
+              </button>
+            )}
 
-          {/* Quick Actions & Profile */}
-          <div className="flex items-center gap-2 sm:gap-3">
             {store && (
               <>
                 <button
@@ -1700,7 +1710,10 @@ export default function Dashboard() {
           </div>
 
           {/* Card 4: Plan Monetization / Net Earnings */}
-          <div className="overflow-hidden rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-2xs transition-all hover:shadow-sm">
+          <div 
+            onClick={() => setActiveTab("payouts")}
+            className="cursor-pointer overflow-hidden rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-2xs transition-all hover:shadow-md hover:border-[#FF4F00]/30"
+          >
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">
                 {metrics.isPro ? "0% Pro Commission" : "Net Seller Payout"}
@@ -1713,7 +1726,7 @@ export default function Dashboard() {
               ₹{metrics.netPayout.toLocaleString()}
             </p>
             <div className="mt-2 text-[11px] font-bold text-neutral-500">
-              {metrics.isPro ? "100% earnings kept with Pro Subscription" : "90% net payout (10% platform commission)"}
+              {metrics.isPro ? "100% earnings kept with Pro Subscription" : "90% net payout (Click to Upgrade Pro →)"}
             </div>
           </div>
         </div>
