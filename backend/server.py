@@ -39,7 +39,7 @@ MONGO_URL = (
     or "mongodb://127.0.0.1:27017"
 )
 DB_NAME = os.environ.get("DB_NAME", "stallwise")
-client = AsyncIOMotorClient(MONGO_URL)
+client = AsyncIOMotorClient(MONGO_URL, serverSelectionTimeoutMS=5000)
 db = client[DB_NAME]
 
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
@@ -1353,6 +1353,11 @@ async def seed():
 
 @app.on_event("startup")
 async def on_startup():
+    try:
+        await client.admin.command("ping")
+        logger.info("Successfully connected to MongoDB database!")
+    except Exception as e:
+        logger.error(f"MongoDB connection failed: {e}. Check that MONGO_URL is set in your Railway service variables!")
     try:
         await asyncio.to_thread(storage.init_storage)
         logger.info("Object storage initialized")
