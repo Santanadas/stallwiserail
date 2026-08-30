@@ -1267,8 +1267,21 @@ function SubscriptionSection({ user, onChange }) {
    ========================================================================== */
 export default function Dashboard() {
   const { user, logout, checkAuth } = useAuth();
-  const [store, setStore] = useState(null);
-  const [storeLoaded, setStoreLoaded] = useState(false);
+  const [store, setStore] = useState(() => {
+    try {
+      const cached = localStorage.getItem("stallwise_store");
+      return cached ? JSON.parse(cached) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [storeLoaded, setStoreLoaded] = useState(() => {
+    try {
+      return Boolean(localStorage.getItem("stallwise_store"));
+    } catch {
+      return false;
+    }
+  });
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
   const [orderCount, setOrderCount] = useState(0);
@@ -1297,15 +1310,36 @@ export default function Dashboard() {
   }, []);
 
   const loadStore = useCallback(async (updated, localOnly) => {
-    if (localOnly) {
+    if (updated) {
       setStore(updated);
+      try {
+        localStorage.setItem("stallwise_store", JSON.stringify(updated));
+      } catch {}
+      setStoreLoaded(true);
       return;
     }
     try {
       const { data } = await api.get("/stores/me");
-      setStore(data);
-    } catch {
-      setStore(null);
+      if (data) {
+        setStore(data);
+        try {
+          localStorage.setItem("stallwise_store", JSON.stringify(data));
+        } catch {}
+      } else {
+        // If server explicitly returns null (no store for this user)
+        setStore(null);
+        try {
+          localStorage.removeItem("stallwise_store");
+        } catch {}
+      }
+    } catch (err) {
+      // Only set to null if backend returns a 404 (user legitimately has no store)
+      if (err.response?.status === 404) {
+        setStore(null);
+        try {
+          localStorage.removeItem("stallwise_store");
+        } catch {}
+      }
     } finally {
       setStoreLoaded(true);
     }
@@ -1328,10 +1362,10 @@ export default function Dashboard() {
   }, [loadStore, loadProducts, loadOrders]);
 
   useEffect(() => {
-    if (storeLoaded && store === null) {
+    if (storeLoaded && store === null && user && !user?.hasStore) {
       navigate("/onboarding", { replace: true });
     }
-  }, [storeLoaded, store, navigate]);
+  }, [storeLoaded, store, user, navigate]);
 
   const copyShopUrl = async () => {
     if (!store) return;

@@ -145,16 +145,29 @@ export default function Onboarding() {
     }
     setBusy(true);
     try {
-      await api.post("/stores", {
+      const { data: createdStore } = await api.post("/stores", {
         name: handle.name,
         slug: handle.slug,
         bio: handle.bio || "",
         acceptanceWindowMinutes: 120,
       });
+      try {
+        localStorage.setItem("stallwise_store", JSON.stringify(createdStore));
+      } catch {}
+      try {
+        await checkAuth();
+      } catch {}
       // Move to PFP upload screen
       setStep(2);
     } catch (e) {
       const msg = formatApiError(e.response?.data?.detail);
+      if (msg.toLowerCase().includes("already have a store")) {
+        try {
+          await checkAuth();
+        } catch {}
+        navigate("/dashboard", { replace: true });
+        return;
+      }
       setHandleErr(msg);
       if (msg.toLowerCase().includes("taken")) {
         setSlugStatus("taken");
