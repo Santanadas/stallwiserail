@@ -194,20 +194,24 @@ class PayVerifyIn(BaseModel):
 # ======================= Auth helpers =======================
 _IS_DEV = FRONTEND_URL.startswith("http://localhost") or FRONTEND_URL.startswith("http://127.0.0.1")
 _COOKIE_SECURE = not _IS_DEV
-_COOKIE_SAMESITE = "lax" if _IS_DEV else "none"
+_COOKIE_SAMESITE = "lax"
 
 
-def set_jwt_cookies(resp: Response, user_id: str, email: str):
+def set_jwt_cookies(resp: Response, user_id: str, email: str) -> str:
+    access_tok = security.create_access_token(user_id, email)
+    refresh_tok = security.create_refresh_token(user_id)
     # 6-month (180 days) access token, 1-year (365 days) refresh token
-    resp.set_cookie("access_token", security.create_access_token(user_id, email),
-                    httponly=True, secure=_COOKIE_SECURE, samesite=_COOKIE_SAMESITE, max_age=15552000, path="/")
-    resp.set_cookie("refresh_token", security.create_refresh_token(user_id),
-                    httponly=True, secure=_COOKIE_SECURE, samesite=_COOKIE_SAMESITE, max_age=31536000, path="/")
+    resp.set_cookie("access_token", access_tok,
+                    httponly=True, secure=_COOKIE_SECURE, samesite="lax", max_age=15552000, path="/")
+    resp.set_cookie("refresh_token", refresh_tok,
+                    httponly=True, secure=_COOKIE_SECURE, samesite="lax", max_age=31536000, path="/")
+    return access_tok
 
 
-def public_user(u: Optional[dict]) -> Optional[dict]:
+async def public_user(u: Optional[dict]) -> Optional[dict]:
     if not u:
         return None
+    store = await db.fetch_one("SELECT store_id, slug, name FROM stores WHERE seller_id = $1", u["user_id"])
     return {
         "user_id": u["user_id"],
         "email": u["email"],
@@ -217,6 +221,9 @@ def public_user(u: Optional[dict]) -> Optional[dict]:
         "subscriptionStatus": u.get("subscription_status") or u.get("subscriptionStatus", "inactive"),
         "picture": u.get("picture"),
         "avatar": u.get("avatar"),
+        "hasStore": bool(store),
+        "storeSlug": store["slug"] if store else None,
+        "storeName": store["name"] if store else None,
     }
 
 
@@ -481,8 +488,10 @@ async def verify_auth_otp(body: VerifyOtpIn, request: Request, response: Respons
         raise HTTPException(status_code=404, detail="User not found")
 
     await db.execute("DELETE FROM pending_otps WHERE otp_id = $1", body.otp_id)
-    set_jwt_cookies(response, user["user_id"], user["email"])
-    return public_user(user)
+    token = set_jwt_cookies(response, user["user_id"], user["email"])
+    out = await public_user(user)
+    out["token"] = token
+    return out
 
 
 @api.post("/auth/resend-otp")
@@ -518,25 +527,30 @@ async def logout(response: Response):
 
 @api.get("/auth/me")
 async def me(user=Depends(get_current_user)):
-    return public_user(user)
+    return await public_user(user)
 
 
 @api.post("/auth/refresh")
 async def refresh(request: Request, response: Response):
     tok = request.cookies.get("refresh_token")
+    auth_header = request.headers.get("Authorization", "")
+    if not tok and auth_header.startswith("Bearer "):
+        tok = auth_header[7:]
     if not tok:
         raise HTTPException(status_code=401, detail="No refresh token")
     try:
         payload = security.decode_token(tok)
-        if payload.get("type") != "refresh":
+        if payload.get("type") not in ("refresh", "access"):
             raise HTTPException(status_code=401, detail="Invalid token type")
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
     user = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", payload["sub"])
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
-    set_jwt_cookies(response, user["user_id"], user["email"])
-    return public_user(user)
+    token = set_jwt_cookies(response, user["user_id"], user["email"])
+    out = await public_user(user)
+    out["token"] = token
+    return out
 
 
 @api.post("/auth/forgot-password")
@@ -607,9 +621,10 @@ async def google_session(body: GoogleSessionIn, response: Response):
         """,
         user["user_id"], session_token, iso(now() + timedelta(days=365)), iso(now())
     )
-    response.set_cookie("session_token", session_token, httponly=True, secure=True,
-                        samesite="none", max_age=31536000, path="/")
-    return public_user(user)
+    token = set_jwt_cookies(response, user["user_id"], user["email"])
+    out = await public_user(user)
+    out["token"] = token
+    return out
 
 
 # ======================= Store routes =======================

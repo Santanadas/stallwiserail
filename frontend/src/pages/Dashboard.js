@@ -1398,7 +1398,16 @@ export default function Dashboard() {
     return { days, maxRev };
   }, [orders]);
 
-  if (!user) return null;
+  if (!user || !storeLoaded) {
+    return (
+      <div className="mk min-h-screen bg-[#F8F9FA] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-3 border-neutral-300 border-t-[#FF4F00]" />
+          <span className="text-xs font-bold text-neutral-500 uppercase tracking-widest">Loading dashboard…</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mk min-h-screen bg-[#F8F9FA] text-[#0A0A0A]">

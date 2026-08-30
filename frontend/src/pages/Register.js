@@ -52,7 +52,7 @@ export default function Register() {
 
   const handleOtpVerified = (user) => {
     setVerifiedUser(user);
-    navigate("/dashboard");
+    navigate("/onboarding", { replace: true });
   };
 
   const handleOtpBack = () => {

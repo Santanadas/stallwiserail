@@ -52,7 +52,11 @@ export default function Login() {
 
   const handleOtpVerified = (user) => {
     setVerifiedUser(user);
-    navigate("/dashboard");
+    if (user?.hasStore) {
+      navigate("/dashboard", { replace: true });
+    } else {
+      navigate("/onboarding", { replace: true });
+    }
   };
 
   const handleOtpBack = () => {

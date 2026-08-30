@@ -4,20 +4,37 @@ import api, { formatApiError } from "@/lib/api";
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState(() => {
+    try {
+      const cached = localStorage.getItem("stallwise_user");
+      return cached ? JSON.parse(cached) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [loading, setLoading] = useState(!user);
 
   const checkAuth = useCallback(async () => {
     try {
       const { data } = await api.get("/auth/me");
       setUser(data);
+      try {
+        localStorage.setItem("stallwise_user", JSON.stringify(data));
+      } catch {}
     } catch {
-      // If access token expired, try silent refresh with the 90-day refresh token
+      // If access token expired, try silent refresh with the 1-year refresh token
       try {
         const { data: refreshed } = await api.post("/auth/refresh");
         setUser(refreshed);
+        try {
+          localStorage.setItem("stallwise_user", JSON.stringify(refreshed));
+        } catch {}
       } catch {
         setUser(false);
+        try {
+          localStorage.removeItem("stallwise_user");
+          localStorage.removeItem("stallwise_token");
+        } catch {}
       }
     } finally {
       setLoading(false);
@@ -51,6 +68,12 @@ export function AuthProvider({ children }) {
    */
   const setVerifiedUser = (userData) => {
     setUser(userData);
+    try {
+      localStorage.setItem("stallwise_user", JSON.stringify(userData));
+      if (userData?.token) {
+        localStorage.setItem("stallwise_token", userData.token);
+      }
+    } catch {}
   };
 
   const resetPassword = async (email) => {
@@ -63,6 +86,10 @@ export function AuthProvider({ children }) {
       await api.post("/auth/logout");
     } catch {}
     setUser(false);
+    try {
+      localStorage.removeItem("stallwise_user");
+      localStorage.removeItem("stallwise_token");
+    } catch {}
   };
 
   return (
