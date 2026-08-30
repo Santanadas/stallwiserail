@@ -24,7 +24,7 @@ export default function Register() {
 
   useDocumentMeta({
     title: "Become a Seller | Stall Wise",
-    description: "Create a free Stall Wise shop in minutes. 0% commission, payments straight to your own Razorpay account.",
+    description: "Create a free Stall Wise shop in minutes with direct payouts to your bank account.",
     path: "/register",
   });
 
@@ -79,7 +79,7 @@ export default function Register() {
     <AuthShell
       testId="register-page"
       title="Open your shop"
-      subtitle="Free to start. No card required. You keep 100% of every sale."
+      subtitle="Free to start. No card required. Direct payouts to your bank."
     >
       <form onSubmit={submit} className="space-y-5">
         <AuthField

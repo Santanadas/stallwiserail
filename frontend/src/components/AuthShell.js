@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { Check } from "lucide-react";
 
-const POINTS = ["0% commission on every sale", "Paid directly to your Razorpay account", "Your own shop link in minutes"];
+const POINTS = ["Direct payouts to your bank account", "Verified Delivery OTP security", "Your own shop link in minutes"];
 
 export const AuthField = ({ label, value, ...props }) => (
   <label className="block">
@@ -64,7 +64,7 @@ export default function AuthShell({ title, subtitle, children, testId }) {
             <Link to="/" className="mk-head text-lg font-black tracking-tighter" data-testid="auth-brand-logo-mobile">
               STALL WISE<span className="text-[#FF4F00]">.</span>
             </Link>
-            <span className="text-xs font-bold uppercase tracking-widest text-[#525252]">0% commission</span>
+            <span className="text-xs font-bold uppercase tracking-widest text-[#525252]">Direct Payouts</span>
           </div>
         </header>
 

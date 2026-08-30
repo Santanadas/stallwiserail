@@ -30,8 +30,8 @@ import storage
 import route_service
 
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
-PREMIUM_TIER = "Stall Wise Pro (0% Commission)"
-FREE_TIER = "Free Plan (10% Commission)"
+PREMIUM_TIER = "Stall Wise Pro"
+FREE_TIER = "Free Plan"
 COMMISSION_RATE_FREE = 0.10
 COMMISSION_RATE_PRO = 0.00
 DEFAULT_WINDOW_MIN = 120

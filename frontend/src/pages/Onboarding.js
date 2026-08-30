@@ -272,7 +272,7 @@ export default function Onboarding() {
                 className="mt-8 flex flex-wrap items-center justify-center gap-3 text-xs font-bold uppercase tracking-wider text-[#525252]"
               >
                 <span className="inline-flex items-center gap-1.5 border-2 border-[#0A0A0A] bg-white px-3.5 py-1.5 shadow-[2px_2px_0px_0px_rgba(10,10,10,1)]">
-                  <Sparkles className="h-4 w-4 text-[#FF4F00]" /> 0% Commission
+                  <Sparkles className="h-4 w-4 text-[#FF4F00]" /> Instant Setup
                 </span>
                 <span className="inline-flex items-center gap-1.5 border-2 border-[#0A0A0A] bg-white px-3.5 py-1.5 shadow-[2px_2px_0px_0px_rgba(10,10,10,1)]">
                   <Check className="h-4 w-4 text-[#0B5227]" /> Direct Settlements

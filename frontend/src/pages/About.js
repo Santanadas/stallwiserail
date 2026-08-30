@@ -5,9 +5,9 @@ const H2 = ({ children }) => <h2 className="mk-head text-lg font-extrabold track
 
 export default function About() {
   useDocumentMeta({
-    title: "About Stall Wise | Zero-Commission Marketplace for Small Sellers",
+    title: "About Stall Wise | Direct-Payout Marketplace for Small Sellers",
     description:
-      "Stall Wise lets anyone open an online shop at stallwise.in/your-name, list products and get paid directly into their own Razorpay account with 0% commission.",
+      "Stall Wise lets anyone open an online shop at stallwise.in/your-name, list products and get paid directly into their linked bank account.",
     path: "/about",
     schemaType: "AboutPage",
   });
@@ -20,9 +20,9 @@ export default function About() {
       <section>
         <H2>Why we built it</H2>
         <p className="mt-2">
-          Most marketplaces charge a commission on every sale, hold the money for days, then make sellers request a payout. For
-          someone selling handmade candles or a few t-shirts a week, that model eats the margin and the patience. Stall Wise removes
-          both problems: you keep 100% of the sale price, and the money goes into your own payment account.
+          Most marketplaces hold your money for days, charge hidden fees, and make sellers request manual payouts. For
+          someone selling handmade candles or a few t-shirts a week, that model eats margin and patience. Stall Wise provides
+          transparent pricing and direct, automated bank settlements via Razorpay.
         </p>
       </section>
       <section>

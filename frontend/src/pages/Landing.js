@@ -32,10 +32,10 @@ const STEPS = [
 ];
 
 const REASONS = [
-  { k: "0%", title: "Commission", desc: "We never take a cut of a sale. Not on your first order, not on your thousandth.", icon: BadgeIndianRupee },
-  { k: "Direct", title: "Payments", desc: "Buyers pay your Razorpay account. No escrow, no 7-day hold, no payout requests.", icon: Zap },
-  { k: "Free", title: "To start", desc: "No setup fee, no card needed. Open a shop and start listing today.", icon: Check },
-  { k: "Yours", title: "Own link", desc: "One clean URL you can put in a bio, a story or a WhatsApp message.", icon: Link2 },
+  { k: "Direct", title: "Bank Payouts", desc: "Payments settle directly into your linked bank account. No payout requests or escrow holds.", icon: Zap },
+  { k: "Fast", title: "Delivery OTP", desc: "Secure 6-digit OTP delivery confirmation protects both sellers and buyers against disputes.", icon: ShieldCheck },
+  { k: "Free", title: "To start", desc: "No setup fee, no card needed. Open a shop and start listing your products today.", icon: Check },
+  { k: "Yours", title: "Custom Link", desc: "One clean URL you can put in your Instagram bio, WhatsApp catalog, or stories.", icon: Link2 },
 ];
 
 const PLANS = [
@@ -87,12 +87,12 @@ const PLANS = [
 
 const FAQS = [
   {
-    q: "How does 0% commission work on Stall Wise?",
-    a: "Stall Wise connects buyers directly to your own Razorpay payment account. We do not hold your money or deduct transaction fees from your sales. 100% of the sale amount goes directly to you.",
+    q: "How do payouts work on Stall Wise?",
+    a: "Stall Wise routes customer payments directly into your linked bank account via Razorpay. You can start free with a 10% platform commission on completed sales, or upgrade to Stall Wise Pro (₹199/mo or ₹1,499/yr) for 0% commission to keep 100% of your earnings.",
   },
   {
     q: "How fast do I receive payments from buyers?",
-    a: "Because buyers pay into your own Razorpay Key ID/Secret, payments settle directly into your linked bank account per your standard Razorpay settlement schedule (usually T+1 or T+2 days, or instant settlements).",
+    a: "Payments settle directly into your linked bank account per standard Razorpay settlement schedules (usually T+1 or T+2 days, or instant settlements).",
   },
   {
     q: "What is my shop link?",
@@ -127,12 +127,12 @@ export default function Landing() {
   };
 
   useDocumentMeta({
-    title: "Stall Wise | Zero-Commission Marketplace — Open Your Own Shop",
+    title: "Stall Wise | Direct-Payout Marketplace — Open Your Online Store",
     description:
-      "Open your own shop at stallwise.in/your-name, list products and get paid directly into your Razorpay account. 0% commission, free to start.",
+      "Open your own shop at stallwise.in/your-name, list products and get paid directly into your bank account. Start free in minutes.",
     path: "/",
     schemaData: faqSchema,
-    keywords: "zero commission marketplace, open online store India, sell products online, direct razorpay seller store, creator shop, stallwise",
+    keywords: "online store India, sell products online, direct razorpay seller store, creator shop, stallwise marketplace",
   });
 
   return (
@@ -168,16 +168,16 @@ export default function Landing() {
             <div className="mk-in lg:col-span-7">
               <div className="mb-4 inline-flex items-center gap-2 border border-[#0A0A0A] bg-white px-3 py-1 text-xs font-bold uppercase tracking-widest sm:mb-5">
                 <Sparkles className="h-3.5 w-3.5 text-[#FF4F00]" />
-                <span>0% commission marketplace</span>
+                <span>Direct Payout Marketplace</span>
               </div>
               <h1 className="mk-head text-3xl font-black leading-[1] tracking-tighter sm:text-5xl lg:text-6xl">
                 Open a shop.<br />
                 Share your link.<br />
-                <span className="text-[#FF4F00]">Keep every rupee.</span>
+                <span className="text-[#FF4F00]">Start earning today.</span>
               </h1>
               <p className="mt-5 max-w-xl text-sm leading-relaxed text-[#525252] sm:mt-6 sm:text-base md:text-lg">
                 Stall Wise gives anyone a real storefront at <span className="font-semibold text-[#0A0A0A]">stallwise.in/your-name</span> in
-                minutes. Buyers pay straight into your own Razorpay account — we never hold your money or take a cut.
+                minutes. Start free with direct bank payouts, or upgrade to Pro to keep 100% of your earnings.
               </p>
               <div className="mt-6 flex flex-col gap-3 sm:mt-8 sm:flex-row sm:items-center">
                 <Link

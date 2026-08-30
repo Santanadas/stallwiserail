@@ -243,7 +243,7 @@ function RouteSection({ onChange }) {
   return (
     <Panel
       title="Direct Bank Settlement & Razorpay Route"
-      subtitle="Customer payments settle automatically to your verified bank account with 0% platform fee."
+      subtitle="Customer payments settle automatically to your verified bank account."
       testId="route-panel"
       action={
         <span
@@ -275,9 +275,9 @@ function RouteSection({ onChange }) {
             <Landmark className="h-5 w-5" />
           </div>
           <div>
-            <h4 className="font-bold text-[#0A0A0A] text-sm">0% Platform Cut — Instant Direct Settlements</h4>
+            <h4 className="font-bold text-[#0A0A0A] text-sm">Automated Direct Bank Settlements</h4>
             <p className="mt-1 text-xs leading-relaxed text-neutral-600">
-              Stall Wise is powered by Razorpay Route. When a customer purchases from your store, 100% of the funds are transferred directly into your linked bank account. No holding periods, no manual withdrawal requests.
+              Stall Wise is powered by Razorpay Route. When a customer purchases from your store, payouts are settled directly into your linked bank account based on your store's active plan. No holding periods, no manual withdrawal requests.
             </p>
           </div>
         </div>
@@ -1281,7 +1281,7 @@ export default function Dashboard() {
 
   useDocumentMeta({
     title: "Executive Seller Suite | Stall Wise",
-    description: "Manage your zero-commission marketplace store, products, live order fulfillment, and direct payouts.",
+    description: "Manage your storefront, catalog, order fulfillment, and direct payouts on Stall Wise.",
     path: "/dashboard",
   });
 
