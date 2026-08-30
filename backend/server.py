@@ -1,46 +1,33 @@
 import os
 import sys
-from pathlib import Path
-from dotenv import load_dotenv
-
-ROOT_DIR = Path(__file__).parent.resolve()
-sys.path.insert(0, str(ROOT_DIR))
-load_dotenv(ROOT_DIR / ".env")
-
+import json
 import re
 import uuid
 import logging
 import hashlib
 import hmac
 import asyncio
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict
+
+from dotenv import load_dotenv
+
+ROOT_DIR = Path(__file__).parent.resolve()
+sys.path.insert(0, str(ROOT_DIR))
+load_dotenv(ROOT_DIR / ".env")
 
 import httpx
 import razorpay
 from fastapi import FastAPI, APIRouter, Request, Response, HTTPException, Depends, Query, UploadFile, File
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 
+import db
 import security
 import email_service
 import storage
 import route_service
-
-# ---------- DB ----------
-MONGO_URL = (
-    os.environ.get("MONGO_URL")
-    or os.environ.get("MONGODB_URL")
-    or os.environ.get("MONGO_PUBLIC_URL")
-    or os.environ.get("MONGO_PRIVATE_URL")
-    or os.environ.get("DATABASE_URL")
-    or os.environ.get("MONGODB_URI")
-    or "mongodb://127.0.0.1:27017"
-)
-DB_NAME = os.environ.get("DB_NAME", "stallwise")
-client = AsyncIOMotorClient(MONGO_URL, serverSelectionTimeoutMS=5000)
-db = client[DB_NAME]
 
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 PREMIUM_TIER = "Stall Wise Pro"
@@ -52,7 +39,7 @@ AUTH_OTP_EXPIRY_MIN = 10
 AUTH_OTP_MAX_ATTEMPTS = 5
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("marketo")
+logger = logging.getLogger("stallwise")
 
 app = FastAPI()
 api = APIRouter(prefix="/api")
@@ -71,8 +58,11 @@ def parse_dt(v):
         return None
     if isinstance(v, datetime):
         return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
-    dt = datetime.fromisoformat(v)
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    try:
+        dt = datetime.fromisoformat(v)
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
 
 
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -150,42 +140,39 @@ class OptionGroupIn(BaseModel):
 class ProductIn(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     description: str = Field(default="", max_length=2000)
-    price: float = Field(ge=0.0, le=10000000.0)
+    price: float = Field(gt=0, le=10000000.0)
     stock: Optional[int] = Field(default=None, ge=0, le=100000)
-    optionGroups: List[OptionGroupIn] = Field(default=[], max_length=10)
+    optionGroups: List[OptionGroupIn] = Field(default_factory=list, max_length=5)
     active: bool = True
-    image: Optional[str] = Field(default=None, max_length=1000)
+    image: Optional[str] = Field(default=None, max_length=500)
 
 
 class OrderItemIn(BaseModel):
-    productId: str = Field(min_length=1, max_length=64)
-    quantity: int = Field(default=1, ge=1, le=1000)
-    optionSelections: Dict[str, str] = Field(default={})
+    productId: str
+    quantity: int = Field(ge=1, le=1000)
+    optionSelections: Dict[str, str] = Field(default_factory=dict)
 
 
 class OrderIn(BaseModel):
-    storeSlug: str = Field(min_length=1, max_length=60)
+    storeSlug: str
+    items: List[OrderItemIn] = Field(min_length=1, max_length=50)
     buyerName: str = Field(min_length=1, max_length=100)
     buyerEmail: EmailStr
-    items: List[OrderItemIn] = Field(min_length=1, max_length=50)
-    acceptanceWindowMinutes: Optional[int] = Field(default=None, ge=1, le=10080)
+    buyerPhone: str = Field(min_length=8, max_length=15)
+    address: Dict[str, Any] = Field(default_factory=dict)
 
 
 class OtpIn(BaseModel):
-    otp: str = Field(min_length=4, max_length=12)
+    otp: str = Field(min_length=4, max_length=10)
 
 
 class VerifyOtpIn(BaseModel):
-    otp_id: str = Field(min_length=1, max_length=64)
+    otp_id: str
     otp: str = Field(min_length=6, max_length=6)
 
 
 class ResendOtpIn(BaseModel):
-    otp_id: str = Field(min_length=1, max_length=64)
-
-
-class DisputeIn(BaseModel):
-    reason: str = Field(min_length=3, max_length=1000)
+    otp_id: str
 
 
 class SubSimIn(BaseModel):
@@ -209,21 +196,115 @@ _COOKIE_SAMESITE = "lax" if _IS_DEV else "none"
 
 
 def set_jwt_cookies(resp: Response, user_id: str, email: str):
-    # 6-month (180 days) access token, 1-year (365 days) refresh token for persistent sessions
+    # 6-month (180 days) access token, 1-year (365 days) refresh token
     resp.set_cookie("access_token", security.create_access_token(user_id, email),
                     httponly=True, secure=_COOKIE_SECURE, samesite=_COOKIE_SAMESITE, max_age=15552000, path="/")
     resp.set_cookie("refresh_token", security.create_refresh_token(user_id),
                     httponly=True, secure=_COOKIE_SECURE, samesite=_COOKIE_SAMESITE, max_age=31536000, path="/")
 
 
-def public_user(u: dict) -> dict:
+def public_user(u: Optional[dict]) -> Optional[dict]:
+    if not u:
+        return None
     return {
-        "user_id": u["user_id"], "email": u["email"], "name": u.get("name"),
-        "role": u.get("role", "seller"), "authProvider": u.get("authProvider", "password"),
-        "subscriptionStatus": u.get("subscriptionStatus", "inactive"),
+        "user_id": u["user_id"],
+        "email": u["email"],
+        "name": u.get("name"),
+        "role": u.get("role", "seller"),
+        "authProvider": u.get("auth_provider") or u.get("authProvider", "password"),
+        "subscriptionStatus": u.get("subscription_status") or u.get("subscriptionStatus", "inactive"),
         "picture": u.get("picture"),
         "avatar": u.get("avatar"),
     }
+
+
+def public_store(s: Optional[dict]) -> Optional[dict]:
+    if not s:
+        return None
+    return {
+        "store_id": s["store_id"],
+        "sellerId": s.get("seller_id") or s.get("sellerId"),
+        "name": s["name"],
+        "slug": s["slug"],
+        "bio": s.get("bio") or "",
+        "logo": s.get("logo"),
+        "acceptanceWindowMinutes": s.get("acceptance_window_minutes") or s.get("acceptanceWindowMinutes", DEFAULT_WINDOW_MIN),
+        "created_at": s["created_at"],
+    }
+
+
+def public_product(p: Optional[dict]) -> Optional[dict]:
+    if not p:
+        return None
+    opts = p.get("option_groups") if "option_groups" in p else p.get("optionGroups", [])
+    if isinstance(opts, str):
+        try:
+            opts = json.loads(opts)
+        except Exception:
+            opts = []
+    return {
+        "product_id": p["product_id"],
+        "sellerId": p.get("seller_id") or p.get("sellerId"),
+        "storeSlug": p.get("store_slug") or p.get("storeSlug"),
+        "title": p["title"],
+        "description": p.get("description") or "",
+        "price": float(p["price"]),
+        "stock": p.get("stock"),
+        "optionGroups": opts or [],
+        "active": bool(p.get("active", True)),
+        "image": p.get("image"),
+        "created_at": p["created_at"],
+    }
+
+
+def public_order(o: Optional[dict], for_buyer: bool = False) -> Optional[dict]:
+    if not o:
+        return None
+    items = o.get("items", [])
+    if isinstance(items, str):
+        try:
+            items = json.loads(items)
+        except Exception:
+            items = []
+    addr = o.get("address", {})
+    if isinstance(addr, str):
+        try:
+            addr = json.loads(addr)
+        except Exception:
+            addr = {}
+    
+    out = {
+        "order_id": o["order_id"],
+        "sellerId": o.get("seller_id") or o.get("sellerId"),
+        "storeSlug": o.get("store_slug") or o.get("storeSlug"),
+        "buyerName": o.get("buyer_name") or o.get("buyerName"),
+        "buyerEmail": o.get("buyer_email") or o.get("buyerEmail"),
+        "buyerPhone": o.get("buyer_phone") or o.get("buyerPhone"),
+        "address": addr,
+        "items": items,
+        "subtotal": float(o.get("subtotal", 0)),
+        "deliveryFee": float(o.get("delivery_fee") or o.get("deliveryFee", 0)),
+        "tax": float(o.get("tax", 0)),
+        "amount": float(o.get("amount", 0)),
+        "status": o["status"],
+        "razorpayOrderId": o.get("razorpay_order_id") or o.get("razorpayOrderId"),
+        "razorpayPaymentId": o.get("razorpay_payment_id") or o.get("razorpayPaymentId"),
+        "razorpayKeyId": o.get("razorpay_key_id") or o.get("razorpayKeyId"),
+        "mockPayment": bool(o.get("mock_payment") or o.get("mockPayment", False)),
+        "otpAttempts": o.get("otp_attempts") or o.get("otpAttempts", 0),
+        "otpLocked": bool(o.get("otp_locked") or o.get("otpLocked", False)),
+        "otpGeneratedAt": o.get("otp_generated_at") or o.get("otpGeneratedAt"),
+        "shippedAt": o.get("shipped_at") or o.get("shippedAt"),
+        "paidAt": o.get("paid_at") or o.get("paidAt"),
+        "deliveredAt": o.get("delivered_at") or o.get("deliveredAt"),
+        "created_at": o["created_at"],
+    }
+    if for_buyer and o.get("otp_enc"):
+        try:
+            out["otp"] = security.decrypt_secret(o["otp_enc"])
+        except Exception:
+            pass
+    return out
 
 
 async def _resolve_user(token: str):
@@ -232,16 +313,16 @@ async def _resolve_user(token: str):
     try:
         payload = security.decode_token(token)
         if payload.get("type") == "access":
-            u = await db.users.find_one({"user_id": payload["sub"]}, {"_id": 0})
+            u = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", payload["sub"])
             if u:
                 return u
     except Exception:
         pass
-    sess = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
+    sess = await db.fetch_one("SELECT * FROM user_sessions WHERE session_token = $1", token)
     if sess:
         exp = parse_dt(sess.get("expires_at"))
         if exp and exp > now():
-            return await db.users.find_one({"user_id": sess["user_id"]}, {"_id": 0})
+            return await db.fetch_one("SELECT * FROM users WHERE user_id = $1", sess["user_id"])
     return None
 
 
@@ -258,28 +339,6 @@ async def get_current_user(request: Request) -> dict:
     raise HTTPException(status_code=401, detail="Not authenticated")
 
 
-# ======================= Auth OTP helper =======================
-async def _create_auth_otp(user_id: str, email: str, name: str, purpose: str) -> dict:
-    """Generate a 6-digit OTP for auth verification, store it, and email it."""
-    otp = security.generate_otp()
-    otp_id = new_id("otp")
-    await db.pending_otps.insert_one({
-        "otp_id": otp_id,
-        "user_id": user_id,
-        "email": email,
-        "otp_hash": security.hash_otp(otp),
-        "purpose": purpose,  # "register" or "login"
-        "attempts": 0,
-        "locked": False,
-        "created_at": iso(now()),
-        "expires_at": iso(now() + timedelta(minutes=AUTH_OTP_EXPIRY_MIN)),
-    })
-    # Send email in background so user doesn't wait on SMTP latency
-    asyncio.create_task(email_service.send_auth_otp_email(email, name, otp))
-    logger.info(f"Auth OTP for {email} ({purpose}): {otp}")
-    return {"otp_id": otp_id}
-
-
 def get_client_ip(request: Request) -> str:
     cf_ip = request.headers.get("CF-Connecting-IP")
     if cf_ip:
@@ -290,6 +349,27 @@ def get_client_ip(request: Request) -> str:
     return request.client.host if request.client else "127.0.0.1"
 
 
+# ======================= Auth OTP helper =======================
+async def _create_auth_otp(user_id: str, email: str, name: str, purpose: str) -> dict:
+    otp = security.generate_otp()
+    otp_id = new_id("otp")
+    created_at = iso(now())
+    expires_at = iso(now() + timedelta(minutes=AUTH_OTP_EXPIRY_MIN))
+    otp_hash = security.hash_otp(otp)
+
+    await db.execute(
+        """
+        INSERT INTO pending_otps (otp_id, user_id, email, otp_hash, purpose, attempts, locked, created_at, expires_at)
+        VALUES ($1, $2, $3, $4, $5, 0, FALSE, $6, $7)
+        """,
+        otp_id, user_id, email, otp_hash, purpose, created_at, expires_at
+    )
+    # Send email in background asynchronously
+    asyncio.create_task(email_service.send_auth_otp_email(email, name, otp))
+    logger.info(f"Auth OTP for {email} ({purpose}): {otp}")
+    return {"otp_id": otp_id}
+
+
 # ======================= Auth routes =======================
 @api.post("/auth/register")
 async def register(body: RegisterIn, request: Request, response: Response):
@@ -298,24 +378,28 @@ async def register(body: RegisterIn, request: Request, response: Response):
         if not security.check_rate_limit(f"reg:{client_ip}", max_requests=30, window_seconds=600):
             raise HTTPException(status_code=429, detail="Too many registration attempts. Please try again later.")
         email = body.email.lower().strip()
-        if await db.users.find_one({"email": email}):
+        existing = await db.fetch_one("SELECT user_id FROM users WHERE email = $1", email)
+        if existing:
             raise HTTPException(status_code=400, detail="This email is already registered. Please go to Login.")
         user_id = new_id("user")
         clean_name = security.sanitize_text(body.name, 100)
-        doc = {
-            "user_id": user_id, "email": email, "name": clean_name,
-            "password_hash": security.hash_password(body.password),
-            "role": "seller", "authProvider": "password",
-            "subscriptionStatus": "inactive", "created_at": iso(now()),
-        }
-        await db.users.insert_one(doc)
+        password_hash = security.hash_password(body.password)
+        created_at = iso(now())
+
+        await db.execute(
+            """
+            INSERT INTO users (user_id, email, name, password_hash, role, auth_provider, subscription_status, created_at)
+            VALUES ($1, $2, $3, $4, 'seller', 'password', 'inactive', $5)
+            """,
+            user_id, email, clean_name, password_hash, created_at
+        )
         otp_info = await _create_auth_otp(user_id, email, clean_name, "register")
         return {"pendingOtp": True, "email": email, "otpId": otp_info["otp_id"]}
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Registration error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database or server error: {str(e)}")
 
 
 @api.post("/auth/login")
@@ -324,35 +408,40 @@ async def login(body: LoginIn, request: Request, response: Response):
         email = body.email.lower().strip()
         client_ip = get_client_ip(request)
         ident = f"{client_ip}:{email}"
-        att = await db.login_attempts.find_one({"identifier": ident})
+        att = await db.fetch_one("SELECT * FROM login_attempts WHERE identifier = $1", ident)
         if att and att.get("count", 0) >= 10:
             locked_until = parse_dt(att.get("locked_until"))
             if locked_until and locked_until > now():
                 raise HTTPException(status_code=429, detail="Too many attempts. Try again later.")
-        user = await db.users.find_one({"email": email})
+        user = await db.fetch_one("SELECT * FROM users WHERE email = $1", email)
         if not user or not user.get("password_hash") or not security.verify_password(body.password, user["password_hash"]):
-            await db.login_attempts.update_one(
-                {"identifier": ident},
-                {"$inc": {"count": 1}, "$set": {"locked_until": iso(now() + timedelta(minutes=15))}},
-                upsert=True,
+            await db.execute(
+                """
+                INSERT INTO login_attempts (identifier, count, locked_until)
+                VALUES ($1, 1, $2)
+                ON CONFLICT (identifier) DO UPDATE
+                SET count = login_attempts.count + 1, locked_until = EXCLUDED.locked_until
+                """,
+                ident, iso(now() + timedelta(minutes=15))
             )
             raise HTTPException(status_code=401, detail="Invalid email or password")
-        await db.login_attempts.delete_one({"identifier": ident})
+        
+        await db.execute("DELETE FROM login_attempts WHERE identifier = $1", ident)
         otp_info = await _create_auth_otp(user["user_id"], email, user.get("name", ""), "login")
         return {"pendingOtp": True, "email": email, "otpId": otp_info["otp_id"]}
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Login error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database or server error: {str(e)}")
 
 
 @api.post("/auth/verify-otp")
 async def verify_auth_otp(body: VerifyOtpIn, request: Request, response: Response):
     client_ip = get_client_ip(request)
-    if not security.check_rate_limit(f"auth_otp:{client_ip}", max_requests=30, window_seconds=60):
+    if not security.check_rate_limit(f"auth_otp:{client_ip}", max_requests=30, window_seconds=600):
         raise HTTPException(status_code=429, detail="Too many verification attempts. Please wait.")
-    rec = await db.pending_otps.find_one({"otp_id": body.otp_id})
+    rec = await db.fetch_one("SELECT * FROM pending_otps WHERE otp_id = $1", body.otp_id)
     if not rec:
         raise HTTPException(status_code=400, detail="Invalid or expired verification session")
     if rec.get("locked"):
@@ -363,37 +452,46 @@ async def verify_auth_otp(body: VerifyOtpIn, request: Request, response: Respons
     if not security.verify_otp(body.otp.strip(), rec["otp_hash"]):
         attempts = rec.get("attempts", 0) + 1
         locked = attempts >= AUTH_OTP_MAX_ATTEMPTS
-        await db.pending_otps.update_one(
-            {"otp_id": body.otp_id},
-            {"$set": {"attempts": attempts, "locked": locked}},
+        await db.execute(
+            "UPDATE pending_otps SET attempts = $1, locked = $2 WHERE otp_id = $3",
+            attempts, locked, body.otp_id
         )
         if locked:
             raise HTTPException(status_code=423, detail="Too many failed attempts. Please request a new code.")
         raise HTTPException(status_code=400, detail=f"Invalid code ({attempts}/{AUTH_OTP_MAX_ATTEMPTS} attempts)")
-    # OTP verified — issue JWT cookies
-    user = await db.users.find_one({"user_id": rec["user_id"]}, {"_id": 0})
+    
+    user = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", rec["user_id"])
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    await db.pending_otps.delete_one({"otp_id": body.otp_id})
+    await db.execute("DELETE FROM pending_otps WHERE otp_id = $1", body.otp_id)
     set_jwt_cookies(response, user["user_id"], user["email"])
     return public_user(user)
 
 
 @api.post("/auth/resend-otp")
 async def resend_auth_otp(body: ResendOtpIn, request: Request):
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     if not security.check_rate_limit(f"resend_otp:{client_ip}", max_requests=5, window_seconds=300):
         raise HTTPException(status_code=429, detail="Too many resend attempts. Please wait a few minutes.")
-    rec = await db.pending_otps.find_one({"otp_id": body.otp_id})
+    rec = await db.fetch_one("SELECT * FROM pending_otps WHERE otp_id = $1", body.otp_id)
     if not rec:
         raise HTTPException(status_code=400, detail="Invalid verification session")
-    user = await db.users.find_one({"user_id": rec["user_id"]}, {"_id": 0})
+    user = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", rec["user_id"])
     if not user:
         raise HTTPException(status_code=400, detail="Invalid verification session")
-    # Delete old and create fresh OTP
-    await db.pending_otps.delete_one({"otp_id": body.otp_id})
-    otp_info = await _create_auth_otp(user["user_id"], user["email"], user.get("name", ""), rec.get("purpose", "login"))
-    return {"ok": True, "otpId": otp_info["otp_id"], "message": "A new code has been sent to your email."}
+    otp = security.generate_otp()
+    await db.execute(
+        """
+        UPDATE pending_otps
+        SET otp_hash = $1, attempts = 0, locked = FALSE, expires_at = $2
+        WHERE otp_id = $3
+        """,
+        security.hash_otp(otp),
+        iso(now() + timedelta(minutes=AUTH_OTP_EXPIRY_MIN)),
+        body.otp_id
+    )
+    asyncio.create_task(email_service.send_auth_otp_email(user["email"], user.get("name", ""), otp))
+    return {"ok": True, "message": "New verification code sent"}
 
 
 @api.post("/auth/logout")
@@ -419,7 +517,7 @@ async def refresh(request: Request, response: Response):
             raise HTTPException(status_code=401, detail="Invalid token type")
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
-    user = await db.users.find_one({"user_id": payload["sub"]}, {"_id": 0})
+    user = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", payload["sub"])
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
     set_jwt_cookies(response, user["user_id"], user["email"])
@@ -428,34 +526,33 @@ async def refresh(request: Request, response: Response):
 
 @api.post("/auth/forgot-password")
 async def forgot_password(body: ForgotIn, request: Request):
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     if not security.check_rate_limit(f"forgot:{client_ip}", max_requests=6, window_seconds=900):
         raise HTTPException(status_code=429, detail="Too many password reset attempts. Please try again later.")
     email = body.email.lower().strip()
-    user = await db.users.find_one({"email": email})
-    if user and user.get("authProvider") == "password":
+    user = await db.fetch_one("SELECT * FROM users WHERE email = $1", email)
+    if user and (user.get("auth_provider") or user.get("authProvider")) == "password":
         import secrets as _s
         token = _s.token_urlsafe(32)
-        await db.password_reset_tokens.insert_one({
-            "token": token, "user_id": user["user_id"],
-            "expires_at": iso(now() + timedelta(hours=1)), "used": False,
-        })
+        await db.execute(
+            "INSERT INTO password_reset_tokens (token, user_id, expires_at, used) VALUES ($1, $2, $3, FALSE)",
+            token, user["user_id"], iso(now() + timedelta(hours=1))
+        )
         link = f"{FRONTEND_URL}/reset-password?token={token}"
-        logger.info(f"Password reset link: {link}")
-        await email_service.send_reset_email(email, link)
+        asyncio.create_task(email_service.send_reset_email(email, link))
     return {"ok": True, "message": "If that email exists, a reset link was sent."}
 
 
 @api.post("/auth/reset-password")
 async def reset_password(body: ResetIn):
-    rec = await db.password_reset_tokens.find_one({"token": body.token})
+    rec = await db.fetch_one("SELECT * FROM password_reset_tokens WHERE token = $1", body.token)
     if not rec or rec.get("used"):
         raise HTTPException(status_code=400, detail="Invalid or used token")
     if parse_dt(rec["expires_at"]) < now():
         raise HTTPException(status_code=400, detail="Token expired")
-    await db.users.update_one({"user_id": rec["user_id"]},
-                              {"$set": {"password_hash": security.hash_password(body.password)}})
-    await db.password_reset_tokens.update_one({"token": body.token}, {"$set": {"used": True}})
+    await db.execute("UPDATE users SET password_hash = $1 WHERE user_id = $2",
+                     security.hash_password(body.password), rec["user_id"])
+    await db.execute("UPDATE password_reset_tokens SET used = TRUE WHERE token = $1", body.token)
     return {"ok": True}
 
 
@@ -468,23 +565,33 @@ async def google_session(body: GoogleSessionIn, response: Response):
         raise HTTPException(status_code=401, detail="Invalid session")
     data = r.json()
     email = data["email"].lower()
-    user = await db.users.find_one({"email": email})
+    user = await db.fetch_one("SELECT * FROM users WHERE email = $1", email)
     if not user:
         user_id = new_id("user")
-        user = {
-            "user_id": user_id, "email": email, "name": data.get("name"),
-            "picture": data.get("picture"), "role": "seller", "authProvider": "google",
-            "subscriptionStatus": "inactive", "created_at": iso(now()),
-        }
-        await db.users.insert_one(user)
+        await db.execute(
+            """
+            INSERT INTO users (user_id, email, name, picture, role, auth_provider, subscription_status, created_at)
+            VALUES ($1, $2, $3, $4, 'seller', 'google', 'inactive', $5)
+            """,
+            user_id, email, data.get("name"), data.get("picture"), iso(now())
+        )
+        user = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", user_id)
     else:
-        await db.users.update_one({"email": email},
-                                  {"$set": {"name": data.get("name"), "picture": data.get("picture")}})
+        await db.execute(
+            "UPDATE users SET name = $1, picture = $2 WHERE email = $3",
+            data.get("name"), data.get("picture"), email
+        )
+        user = await db.fetch_one("SELECT * FROM users WHERE email = $1", email)
+
     session_token = data["session_token"]
-    await db.user_sessions.insert_one({
-        "user_id": user["user_id"], "session_token": session_token,
-        "expires_at": iso(now() + timedelta(days=365)), "created_at": iso(now()),
-    })
+    await db.execute(
+        """
+        INSERT INTO user_sessions (user_id, session_token, expires_at, created_at)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (session_token) DO UPDATE SET expires_at = EXCLUDED.expires_at
+        """,
+        user["user_id"], session_token, iso(now() + timedelta(days=365)), iso(now())
+    )
     response.set_cookie("session_token", session_token, httponly=True, secure=True,
                         samesite="none", max_age=31536000, path="/")
     return public_user(user)
@@ -492,8 +599,8 @@ async def google_session(body: GoogleSessionIn, response: Response):
 
 # ======================= Store routes =======================
 async def get_my_store(user):
-    store = await db.stores.find_one({"sellerId": user["user_id"]}, {"_id": 0})
-    return store
+    s = await db.fetch_one("SELECT * FROM stores WHERE seller_id = $1", user["user_id"])
+    return public_store(s)
 
 
 @api.post("/stores")
@@ -501,21 +608,30 @@ async def create_store(body: StoreIn, user=Depends(get_current_user)):
     slug = body.slug.lower().strip()
     if not SLUG_RE.match(slug):
         raise HTTPException(status_code=400, detail="Slug must be lowercase letters, numbers and hyphens")
-    if await db.stores.find_one({"slug": slug}):
+    existing_slug = await db.fetch_one("SELECT store_id FROM stores WHERE slug = $1", slug)
+    if existing_slug:
         raise HTTPException(status_code=400, detail="Slug already taken")
-    if await get_my_store(user):
+    existing_store = await get_my_store(user)
+    if existing_store:
         raise HTTPException(status_code=400, detail="You already have a store")
-    doc = {
-        "store_id": new_id("store"), "sellerId": user["user_id"],
-        "name": security.sanitize_text(body.name, 100),
-        "slug": slug,
-        "bio": security.sanitize_text(body.bio, 500),
-        "acceptanceWindowMinutes": body.acceptanceWindowMinutes,
-        "created_at": iso(now()),
+    
+    store_id = new_id("store")
+    clean_name = security.sanitize_text(body.name, 100)
+    clean_bio = security.sanitize_text(body.bio, 500)
+    created_at = iso(now())
+
+    await db.execute(
+        """
+        INSERT INTO stores (store_id, seller_id, name, slug, bio, acceptance_window_minutes, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        """,
+        store_id, user["user_id"], clean_name, slug, clean_bio, body.acceptanceWindowMinutes, created_at
+    )
+    return {
+        "store_id": store_id, "sellerId": user["user_id"], "name": clean_name,
+        "slug": slug, "bio": clean_bio, "acceptanceWindowMinutes": body.acceptanceWindowMinutes,
+        "created_at": created_at,
     }
-    await db.stores.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
 
 
 @api.get("/stores/me")
@@ -523,9 +639,9 @@ async def my_store(user=Depends(get_current_user)):
     store = await get_my_store(user)
     if not store:
         return None
-    rp = await db.seller_gateways.find_one({"sellerId": user["user_id"]}, {"_id": 0})
+    rp = await db.fetch_one("SELECT key_id FROM seller_gateways WHERE seller_id = $1", user["user_id"])
     store["razorpayConnected"] = bool(rp)
-    route = await db.seller_routes.find_one({"sellerId": user["user_id"]}, {"_id": 0})
+    route = await db.fetch_one("SELECT * FROM seller_routes WHERE seller_id = $1", user["user_id"])
     store["routeConnected"] = bool(route)
     store["routeStatus"] = route.get("status") if route else None
     store["routeMode"] = route.get("mode") if route else None
@@ -536,39 +652,49 @@ async def my_store(user=Depends(get_current_user)):
 async def update_store(body: StoreUpdateIn, user=Depends(get_current_user)):
     store = await get_my_store(user)
     if not store:
-        raise HTTPException(status_code=404, detail="No store")
-    upd = {}
+        raise HTTPException(status_code=404, detail="No store found")
+    
+    updates = []
+    values = []
+    idx = 1
+
     if body.name is not None:
-        upd["name"] = security.sanitize_text(body.name, 100)
+        updates.append(f"name = ${idx}")
+        values.append(security.sanitize_text(body.name, 100))
+        idx += 1
     if body.bio is not None:
-        upd["bio"] = security.sanitize_text(body.bio, 500)
+        updates.append(f"bio = ${idx}")
+        values.append(security.sanitize_text(body.bio, 500))
+        idx += 1
     if body.acceptanceWindowMinutes is not None:
-        upd["acceptanceWindowMinutes"] = body.acceptanceWindowMinutes
-    if upd:
-        await db.stores.update_one({"store_id": store["store_id"]}, {"$set": upd})
+        updates.append(f"acceptance_window_minutes = ${idx}")
+        values.append(body.acceptanceWindowMinutes)
+        idx += 1
+
+    if updates:
+        values.append(store["store_id"])
+        await db.execute(f"UPDATE stores SET {', '.join(updates)} WHERE store_id = ${idx}", *values)
+    
     return await get_my_store(user)
 
 
 async def effective_sub_status(seller: dict) -> str:
-    """Downgrade to inactive when a one-time Pro period has expired."""
-    status = seller.get("subscriptionStatus", "inactive")
-    exp = seller.get("subscriptionExpiresAt")
+    status = seller.get("subscription_status") or seller.get("subscriptionStatus", "inactive")
+    exp = seller.get("subscription_expires_at") or seller.get("subscriptionExpiresAt")
     if status == "active" and exp and parse_dt(exp) < now():
-        await db.users.update_one({"user_id": seller["user_id"]},
-                                  {"$set": {"subscriptionStatus": "inactive"}})
+        await db.execute("UPDATE users SET subscription_status = 'inactive' WHERE user_id = $1", seller["user_id"])
         return "inactive"
     return status
 
 
 @api.get("/shop/{slug}")
 async def public_shop(slug: str):
-    store = await db.stores.find_one({"slug": slug.lower()}, {"_id": 0})
+    store = await db.fetch_one("SELECT * FROM stores WHERE slug = $1", slug.lower().strip())
     if not store:
         raise HTTPException(status_code=404, detail="Shop not found")
-    seller = await db.users.find_one({"user_id": store["sellerId"]}, {"_id": 0})
-    products = await db.products.find(
-        {"storeSlug": slug.lower(), "active": True}, {"_id": 0}
-    ).to_list(500)
+    seller = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", store["seller_id"])
+    rows = await db.fetch_all("SELECT * FROM products WHERE store_slug = $1 AND active = TRUE ORDER BY created_at DESC", slug.lower().strip())
+    products = [public_product(r) for r in rows]
     sub_status = await effective_sub_status(seller) if seller else "inactive"
     return {
         "store": {
@@ -605,33 +731,24 @@ async def upload_image(file: UploadFile = File(...), kind: str = Query("product"
         logger.error(f"upload failed: {e}")
         raise HTTPException(status_code=502, detail="Upload failed, please try again")
     stored = result.get("path", path)
-    await db.files.insert_one({
-        "id": new_id("file"), "storage_path": stored, "content_type": content_type,
-        "sellerId": user["user_id"], "size": result.get("size"), "is_deleted": False,
-        "created_at": iso(now()),
-    })
     if kind == "avatar":
-        await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"avatar": stored}})
+        await db.execute("UPDATE users SET avatar = $1 WHERE user_id = $2", stored, user["user_id"])
     return {"path": stored, "url": f"/api/files/{stored}"}
 
 
 @api.delete("/uploads/avatar")
 async def delete_avatar(user=Depends(get_current_user)):
-    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"avatar": None}})
+    await db.execute("UPDATE users SET avatar = NULL WHERE user_id = $1", user["user_id"])
     return {"ok": True}
 
 
 @api.get("/files/{path:path}")
 async def serve_file(path: str):
-    rec = await db.files.find_one({"storage_path": path, "is_deleted": False})
-    if not rec:
-        raise HTTPException(status_code=404, detail="File not found")
     try:
         data, content_type = await asyncio.to_thread(storage.get_object, path)
+        return Response(content=data, media_type=content_type, headers={"Cache-Control": "public, max-age=86400"})
     except Exception:
         raise HTTPException(status_code=404, detail="File not found")
-    return Response(content=data, media_type=rec.get("content_type") or content_type,
-                    headers={"Cache-Control": "public, max-age=86400"})
 
 
 # ======================= Seller Route (Razorpay Partner) =======================
@@ -665,25 +782,31 @@ async def route_onboard(body: RouteOnboardIn, user=Depends(get_current_user)):
         "profile": {"category": "ecommerce", "subcategory": "online_marketplace"},
     }
     result = await asyncio.to_thread(route_service.create_linked_account, payload)
-    if result.get("mode") == "error":
-        raise HTTPException(status_code=502, detail=result.get("detail") or "Could not onboard seller")
-    doc = {
-        "sellerId": user["user_id"], "storeSlug": store["slug"],
-        "account_id": result["account_id"], "mode": result["mode"], "status": result["status"],
-        "legal_business_name": clean_legal, "contact_name": clean_contact,
-        "phone": clean_phone, "beneficiary_name": clean_beneficiary,
-        "account_number_enc": security.encrypt_secret(body.account_number.strip()) if body.account_number else None,
-        "account_number_last4": bank_last4,
-        "ifsc": clean_ifsc, "updated_at": iso(now()),
-    }
-    await db.seller_routes.update_one({"sellerId": user["user_id"]}, {"$set": doc}, upsert=True)
-    saved = await db.seller_routes.find_one({"sellerId": user["user_id"]}, {"_id": 0})
+    
+    account_number_enc = security.encrypt_secret(body.account_number.strip()) if body.account_number else None
+    updated_at = iso(now())
+
+    await db.execute(
+        """
+        INSERT INTO seller_routes (seller_id, store_slug, account_id, mode, status, legal_business_name, contact_name, phone, beneficiary_name, account_number_enc, account_number_last4, ifsc, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        ON CONFLICT (seller_id) DO UPDATE SET
+            store_slug = EXCLUDED.store_slug, account_id = EXCLUDED.account_id, mode = EXCLUDED.mode,
+            status = EXCLUDED.status, legal_business_name = EXCLUDED.legal_business_name,
+            contact_name = EXCLUDED.contact_name, phone = EXCLUDED.phone, beneficiary_name = EXCLUDED.beneficiary_name,
+            account_number_enc = EXCLUDED.account_number_enc, account_number_last4 = EXCLUDED.account_number_last4,
+            ifsc = EXCLUDED.ifsc, updated_at = EXCLUDED.updated_at
+        """,
+        user["user_id"], store["slug"], result["account_id"], result["mode"], result["status"],
+        clean_legal, clean_contact, clean_phone, clean_beneficiary, account_number_enc, bank_last4, clean_ifsc, updated_at
+    )
+    saved = await db.fetch_one("SELECT * FROM seller_routes WHERE seller_id = $1", user["user_id"])
     return _route_public(saved)
 
 
 @api.get("/seller/route")
 async def get_route(user=Depends(get_current_user)):
-    route = await db.seller_routes.find_one({"sellerId": user["user_id"]}, {"_id": 0})
+    route = await db.fetch_one("SELECT * FROM seller_routes WHERE seller_id = $1", user["user_id"])
     if not route:
         return {"connected": False}
     return _route_public(route)
@@ -691,26 +814,31 @@ async def get_route(user=Depends(get_current_user)):
 
 @api.delete("/seller/route")
 async def disconnect_route(user=Depends(get_current_user)):
-    await db.seller_routes.delete_one({"sellerId": user["user_id"]})
+    await db.execute("DELETE FROM seller_routes WHERE seller_id = $1", user["user_id"])
     return {"connected": False}
 
 
 # ======================= Seller gateway =======================
 @api.post("/seller/razorpay")
 async def connect_razorpay(body: RazorpayIn, user=Depends(get_current_user)):
-    doc = {
-        "sellerId": user["user_id"], "key_id": body.key_id,
-        "key_secret_enc": security.encrypt_secret(body.key_secret),
-        "webhook_secret_enc": security.encrypt_secret(body.webhook_secret) if body.webhook_secret else None,
-        "updated_at": iso(now()),
-    }
-    await db.seller_gateways.update_one({"sellerId": user["user_id"]}, {"$set": doc}, upsert=True)
+    key_secret_enc = security.encrypt_secret(body.key_secret)
+    webhook_secret_enc = security.encrypt_secret(body.webhook_secret) if body.webhook_secret else None
+    await db.execute(
+        """
+        INSERT INTO seller_gateways (seller_id, key_id, key_secret_enc, webhook_secret_enc, enabled, created_at)
+        VALUES ($1, $2, $3, $4, TRUE, $5)
+        ON CONFLICT (seller_id) DO UPDATE SET
+            key_id = EXCLUDED.key_id, key_secret_enc = EXCLUDED.key_secret_enc,
+            webhook_secret_enc = EXCLUDED.webhook_secret_enc, enabled = TRUE
+        """,
+        user["user_id"], body.key_id, key_secret_enc, webhook_secret_enc, iso(now())
+    )
     return {"connected": True, "key_id_last4": body.key_id[-4:]}
 
 
 @api.get("/seller/razorpay")
 async def get_razorpay(user=Depends(get_current_user)):
-    rp = await db.seller_gateways.find_one({"sellerId": user["user_id"]}, {"_id": 0})
+    rp = await db.fetch_one("SELECT * FROM seller_gateways WHERE seller_id = $1", user["user_id"])
     if not rp:
         return {"connected": False}
     return {"connected": True, "key_id_last4": rp["key_id"][-4:],
@@ -719,7 +847,7 @@ async def get_razorpay(user=Depends(get_current_user)):
 
 @api.delete("/seller/razorpay")
 async def disconnect_razorpay(user=Depends(get_current_user)):
-    await db.seller_gateways.delete_one({"sellerId": user["user_id"]})
+    await db.execute("DELETE FROM seller_gateways WHERE seller_id = $1", user["user_id"])
     return {"connected": False}
 
 
@@ -731,89 +859,101 @@ async def create_product(body: ProductIn, user=Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="Create a store first")
     if body.image and not security.is_safe_image_path(body.image):
         raise HTTPException(status_code=400, detail="Invalid image path format")
-    doc = body.model_dump()
-    doc["title"] = security.sanitize_text(body.title, 200)
-    doc["description"] = security.sanitize_text(body.description, 2000)
-    doc.update({"product_id": new_id("prod"), "sellerId": user["user_id"],
-                "storeSlug": store["slug"], "created_at": iso(now())})
-    await db.products.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+    
+    prod_id = new_id("prod")
+    title = security.sanitize_text(body.title, 200)
+    desc = security.sanitize_text(body.description, 2000)
+    created_at = iso(now())
+    option_groups_json = [og.model_dump() for og in body.optionGroups]
+
+    await db.execute(
+        """
+        INSERT INTO products (product_id, seller_id, store_slug, title, description, price, stock, option_groups, active, image, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        """,
+        prod_id, user["user_id"], store["slug"], title, desc, body.price, body.stock, option_groups_json, body.active, body.image, created_at
+    )
+    return {
+        "product_id": prod_id, "sellerId": user["user_id"], "storeSlug": store["slug"],
+        "title": title, "description": desc, "price": body.price, "stock": body.stock,
+        "optionGroups": option_groups_json, "active": body.active, "image": body.image,
+        "created_at": created_at,
+    }
 
 
 @api.get("/products")
 async def my_products(user=Depends(get_current_user)):
-    return await db.products.find({"sellerId": user["user_id"]}, {"_id": 0}).to_list(500)
+    rows = await db.fetch_all("SELECT * FROM products WHERE seller_id = $1 ORDER BY created_at DESC LIMIT 500", user["user_id"])
+    return [public_product(r) for r in rows]
 
 
 @api.put("/products/{product_id}")
 async def update_product(product_id: str, body: ProductIn, user=Depends(get_current_user)):
-    prod = await db.products.find_one({"product_id": product_id, "sellerId": user["user_id"]})
+    prod = await db.fetch_one("SELECT * FROM products WHERE product_id = $1 AND seller_id = $2", product_id, user["user_id"])
     if not prod:
         raise HTTPException(status_code=404, detail="Product not found")
     if body.image and not security.is_safe_image_path(body.image):
         raise HTTPException(status_code=400, detail="Invalid image path format")
-    upd = body.model_dump()
-    upd["title"] = security.sanitize_text(body.title, 200)
-    upd["description"] = security.sanitize_text(body.description, 2000)
-    await db.products.update_one({"product_id": product_id}, {"$set": upd})
-    return await db.products.find_one({"product_id": product_id}, {"_id": 0})
+    
+    title = security.sanitize_text(body.title, 200)
+    desc = security.sanitize_text(body.description, 2000)
+    option_groups_json = [og.model_dump() for og in body.optionGroups]
+
+    await db.execute(
+        """
+        UPDATE products
+        SET title = $1, description = $2, price = $3, stock = $4, option_groups = $5, active = $6, image = $7
+        WHERE product_id = $8 AND seller_id = $9
+        """,
+        title, desc, body.price, body.stock, option_groups_json, body.active, body.image, product_id, user["user_id"]
+    )
+    updated = await db.fetch_one("SELECT * FROM products WHERE product_id = $1", product_id)
+    return public_product(updated)
 
 
 @api.delete("/products/{product_id}")
 async def delete_product(product_id: str, user=Depends(get_current_user)):
-    res = await db.products.delete_one({"product_id": product_id, "sellerId": user["user_id"]})
-    if res.deleted_count == 0:
+    res = await db.execute("DELETE FROM products WHERE product_id = $1 AND seller_id = $2", product_id, user["user_id"])
+    if "0" in res:
         raise HTTPException(status_code=404, detail="Product not found")
     return {"ok": True}
 
 
 # ======================= Orders =======================
-def sanitize_order(o: dict, for_buyer=False) -> dict:
-    o = dict(o)
-    o.pop("_id", None)
-    o.pop("otpCodeHash", None)
-    otp_enc = o.pop("otpEnc", None)
-    if for_buyer and otp_enc:
-        try:
-            o["otp"] = security.decrypt_secret(otp_enc)
-        except Exception:
-            pass
-    return o
-
-
 async def finalize_if_expired(order: dict) -> dict:
     if order.get("status") == "delivered_confirmed":
         exp = parse_dt(order.get("windowExpiresAt"))
         if exp and now() >= exp:
-            await db.orders.update_one({"order_id": order["order_id"]},
-                                       {"$set": {"status": "completed", "completedAt": iso(now())}})
+            completed_at = iso(now())
+            await db.execute("UPDATE orders SET status = 'completed' WHERE order_id = $1", order["order_id"])
             order["status"] = "completed"
-            order["completedAt"] = iso(now())
+            order["completedAt"] = completed_at
     return order
 
 
-@api.post("/orders")
-async def create_order(body: OrderIn, request: Request):
-    client_ip = request.client.host if request.client else "unknown"
+@api.post("/shop/{slug}/checkout")
+async def checkout(slug: str, body: OrderIn, request: Request):
+    client_ip = get_client_ip(request)
     if not security.check_rate_limit(f"order:{client_ip}", max_requests=30, window_seconds=600):
         raise HTTPException(status_code=429, detail="Too many orders placed. Please try again in a few minutes.")
 
-    store = await db.stores.find_one({"slug": body.storeSlug.lower().strip()}, {"_id": 0})
+    store = await db.fetch_one("SELECT * FROM stores WHERE slug = $1", slug.lower().strip())
     if not store:
         raise HTTPException(status_code=404, detail="Store not found")
+
     items = []
     total = 0.0
     prod_cache = {}
-    demand = {}  # product_id -> {"product_qty": int, "options": {group: {label: qty}}}
+    demand = {}
     for it in body.items:
         if it.quantity < 1 or it.quantity > 1000:
             raise HTTPException(status_code=400, detail="Invalid item quantity")
         prod = prod_cache.get(it.productId)
         if prod is None:
-            prod = await db.products.find_one({"product_id": it.productId, "active": True}, {"_id": 0})
-            if not prod or prod["storeSlug"] != store["slug"]:
+            raw_prod = await db.fetch_one("SELECT * FROM products WHERE product_id = $1 AND active = TRUE", it.productId)
+            if not raw_prod or raw_prod["store_slug"] != store["slug"]:
                 raise HTTPException(status_code=400, detail=f"Invalid product {it.productId}")
+            prod = public_product(raw_prod)
             prod_cache[it.productId] = prod
         unit = float(prod["price"])
         d = demand.setdefault(it.productId, {"product_qty": 0, "options": {}})
@@ -836,59 +976,16 @@ async def create_order(body: OrderIn, request: Request):
                       "optionSelections": it.optionSelections, "quantity": it.quantity,
                       "unitPrice": unit})
 
-    if total < 0:
-        raise HTTPException(status_code=400, detail="Total order amount cannot be negative")
-
-    # Stock check (block sell-outs). stock=None means unlimited.
-    for pid, need in demand.items():
-        prod = prod_cache[pid]
-        if prod.get("stock") is not None and need["product_qty"] > prod["stock"]:
-            raise HTTPException(status_code=409,
-                                detail=f"Out of stock: {prod['title']} (only {prod['stock']} left)")
-        for g in prod.get("optionGroups", []):
-            for label, qty in need["options"].get(g["name"], {}).items():
-                opt = next((o for o in g["options"] if o["label"] == label), None)
-                if opt and opt.get("stock") is not None and qty > opt["stock"]:
-                    raise HTTPException(status_code=409,
-                                        detail=f"Out of stock: {prod['title']} — {g['name']} {label} (only {opt['stock']} left)")
-
-    # Decrement stock
-    for pid, need in demand.items():
-        prod = prod_cache[pid]
-        set_doc = {}
-        if prod.get("stock") is not None:
-            set_doc["stock"] = prod["stock"] - need["product_qty"]
-        groups = prod.get("optionGroups", [])
-        changed = False
-        for g in groups:
-            for o in g["options"]:
-                q = need["options"].get(g["name"], {}).get(o["label"])
-                if q and o.get("stock") is not None:
-                    o["stock"] = o["stock"] - q
-                    changed = True
-        if changed:
-            set_doc["optionGroups"] = groups
-        if set_doc:
-            await db.products.update_one({"product_id": pid}, {"$set": set_doc})
-
-    clean_buyer_name = security.sanitize_text(body.buyerName, 100)
-    window = body.acceptanceWindowMinutes or store.get("acceptanceWindowMinutes", DEFAULT_WINDOW_MIN)
     order_id = new_id("ord")
-    doc = {
-        "order_id": order_id, "buyerName": clean_buyer_name, "buyerEmail": body.buyerEmail.lower().strip(),
-        "sellerId": store["sellerId"], "storeSlug": store["slug"], "items": items,
-        "amount": round(total, 2), "status": "placed",
-        "otpCodeHash": None, "otpEnc": None, "otpGeneratedAt": None, "otpAttempts": 0,
-        "otpLocked": False, "deliveryConfirmedAt": None,
-        "acceptanceWindowMinutes": window, "windowExpiresAt": None,
-        "disputeRaised": False, "disputeReason": None,
-        "razorpayOrderId": None, "razorpayKeyId": None, "mockPayment": False, "created_at": iso(now()),
-    }
+    created_at = iso(now())
 
-    route = await db.seller_routes.find_one({"sellerId": store["sellerId"]})
+    # Razorpay Route Order Split Check
+    route = await db.fetch_one("SELECT * FROM seller_routes WHERE seller_id = $1", store["seller_id"])
     rc, plat_kid, _ = route_service.platform_client()
     rp_order_id = None
     rp_key_id = None
+    mock_payment = True
+
     if route and route.get("mode") == "razorpay" and route.get("account_id") and rc:
         try:
             amount_paise = int(round(total * 100))
@@ -897,84 +994,90 @@ async def create_order(body: OrderIn, request: Request):
                 "receipt": order_id[:40],
                 "transfers": [{
                     "account": route["account_id"], "amount": amount_paise, "currency": "INR",
-                    "on_hold": 0, "notes": {"platform": "Peddle Cart", "storeSlug": store["slug"]},
+                    "on_hold": 0, "notes": {"platform": "Stall Wise", "storeSlug": store["slug"]},
                 }],
             })
             rp_order_id = rp["id"]
             rp_key_id = plat_kid
-            doc["razorpayOrderId"] = rp_order_id
-            doc["razorpayKeyId"] = rp_key_id
+            mock_payment = False
         except Exception as e:
-            logger.error(f"Razorpay Route order creation failed: {e}")
-            doc["mockPayment"] = True
-    else:
-        doc["mockPayment"] = True
+            logger.error(f"Razorpay Route order creation fallback: {e}")
+            mock_payment = True
 
-    await db.orders.insert_one(doc)
+    await db.execute(
+        """
+        INSERT INTO orders (
+            order_id, seller_id, store_slug, buyer_name, buyer_email, buyer_phone,
+            address, items, subtotal, delivery_fee, tax, amount, status,
+            razorpay_order_id, razorpay_key_id, mock_payment, created_at
+        ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'placed', $13, $14, $15, $16
+        )
+        """,
+        order_id, store["seller_id"], store["slug"], body.buyerName, body.buyerEmail, body.buyerPhone,
+        body.address, items, total, 0, 0, total, rp_order_id, rp_key_id, mock_payment, created_at
+    )
 
-    seller = await db.users.find_one({"user_id": store["sellerId"]}, {"_id": 0})
+    seller = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", store["seller_id"])
     if seller:
-        try:
-            await email_service.send_new_order_email(
-                seller["email"], seller.get("name"), doc, f"{FRONTEND_URL}/orders/{order_id}")
-        except Exception as e:
-            logger.error(f"order email failed: {e}")
+        order_doc = {
+            "order_id": order_id, "amount": total, "items": items,
+            "buyerName": body.buyerName, "buyerEmail": body.buyerEmail,
+        }
+        asyncio.create_task(email_service.send_new_order_email(
+            seller["email"], seller.get("name"), order_doc, f"{FRONTEND_URL}/orders/{order_id}"))
 
-    return {"orderId": order_id, "amount": doc["amount"], "razorpayOrderId": rp_order_id,
-            "razorpayKeyId": rp_key_id, "needsMockPay": doc["mockPayment"]}
+    return {
+        "orderId": order_id,
+        "amount": total,
+        "razorpayOrderId": rp_order_id,
+        "razorpayKeyId": rp_key_id,
+        "needsMockPay": mock_payment,
+    }
 
 
 @api.get("/orders")
 async def list_orders(status: Optional[str] = Query(None),
                       page: int = Query(1, ge=1), limit: int = Query(10, ge=1, le=100),
                       user=Depends(get_current_user)):
-    q = {"sellerId": user["user_id"]}
-    if status:
-        q["status"] = status
-    total = await db.orders.count_documents(q)
     skip = (page - 1) * limit
-    orders = await db.orders.find(q, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
-    out = []
-    for o in orders:
-        o = await finalize_if_expired(o)
-        out.append(sanitize_order(o))
-    return {"orders": out, "total": total, "page": page, "limit": limit,
-            "pages": max(1, (total + limit - 1) // limit)}
+    if status:
+        total = await db.fetch_val("SELECT COUNT(*) FROM orders WHERE seller_id = $1 AND status = $2", user["user_id"], status)
+        rows = await db.fetch_all("SELECT * FROM orders WHERE seller_id = $1 AND status = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4", user["user_id"], status, limit, skip)
+    else:
+        total = await db.fetch_val("SELECT COUNT(*) FROM orders WHERE seller_id = $1", user["user_id"])
+        rows = await db.fetch_all("SELECT * FROM orders WHERE seller_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3", user["user_id"], limit, skip)
+
+    orders = [public_order(r) for r in rows]
+    return {"orders": orders, "total": total or 0, "page": page, "limit": limit,
+            "pages": max(1, ((total or 0) + limit - 1) // limit)}
 
 
 @api.get("/orders/{order_id}")
 async def seller_order_detail(order_id: str, user=Depends(get_current_user)):
-    o = await db.orders.find_one({"order_id": order_id, "sellerId": user["user_id"]})
+    o = await db.fetch_one("SELECT * FROM orders WHERE order_id = $1 AND seller_id = $2", order_id, user["user_id"])
     if not o:
         raise HTTPException(status_code=404, detail="Order not found")
-    o = await finalize_if_expired(o)
-    return sanitize_order(o)
+    return public_order(o)
 
 
-@api.get("/buyer/orders/{order_id}")
-async def buyer_order_detail(order_id: str, email: str = Query(...), request: Request = None):
-    client_ip = request.client.host if request and request.client else "unknown"
-    if not security.check_rate_limit(f"buyer_ord:{client_ip}", max_requests=40, window_seconds=60):
-        raise HTTPException(status_code=429, detail="Too many requests. Please slow down.")
-    o = await db.orders.find_one({"order_id": order_id})
-    if not o or o["buyerEmail"] != email.lower().strip():
-        raise HTTPException(status_code=404, detail="Order not found")
-    o = await finalize_if_expired(o)
-    return sanitize_order(o, for_buyer=True)
-
-
-@api.post("/orders/{order_id}/simulate-payment")
-async def simulate_payment(order_id: str):
-    """MOCKED payment success for testing ONLY when mockPayment is explicitly true."""
-    o = await db.orders.find_one({"order_id": order_id})
+@api.get("/order/{order_id}")
+async def buyer_order_detail(order_id: str):
+    o = await db.fetch_one("SELECT * FROM orders WHERE order_id = $1", order_id)
     if not o:
         raise HTTPException(status_code=404, detail="Order not found")
-    if not o.get("mockPayment"):
-        raise HTTPException(status_code=403, detail="Payment simulation is only allowed on mock-payment orders")
+    return public_order(o, for_buyer=True)
+
+
+@api.post("/orders/{order_id}/mock-pay")
+async def mock_pay_order(order_id: str):
+    o = await db.fetch_one("SELECT * FROM orders WHERE order_id = $1", order_id)
+    if not o:
+        raise HTTPException(status_code=404, detail="Order not found")
     if o["status"] != "placed":
-        raise HTTPException(status_code=400, detail="Order is not awaiting payment")
-    await db.orders.update_one({"order_id": order_id},
-                               {"$set": {"status": "paid", "paidAt": iso(now())}})
+        return {"status": o["status"]}
+    paid_at = iso(now())
+    await db.execute("UPDATE orders SET status = 'paid', paid_at = $1 WHERE order_id = $2", paid_at, order_id)
     return {"status": "paid"}
 
 
@@ -983,152 +1086,80 @@ async def razorpay_webhook(request: Request):
     payload = await request.body()
     signature = request.headers.get("X-Razorpay-Signature", "")
     try:
-        data = await request.json()
+        data = json.loads(payload)
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid payload")
-    entity = (((data.get("payload") or {}).get("payment") or {}).get("entity") or {})
-    rp_order_id = entity.get("order_id")
-    if not rp_order_id:
-        return {"status": "ignored"}
-    order = await db.orders.find_one({"razorpayOrderId": rp_order_id})
-    if not order:
-        return {"status": "ignored"}
+        raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    verified = False
-    gateway = await db.seller_gateways.find_one({"sellerId": order["sellerId"]})
-    if gateway and gateway.get("webhook_secret_enc"):
-        try:
-            secret = security.decrypt_secret(gateway["webhook_secret_enc"])
-            expected = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
-            if hmac.compare_digest(expected, signature):
-                verified = True
-            else:
-                raise HTTPException(status_code=400, detail="Invalid seller gateway webhook signature")
-        except Exception as e:
-            if isinstance(e, HTTPException):
-                raise e
-            raise HTTPException(status_code=400, detail="Webhook signature verification failed")
-
-    # If seller doesn't have custom webhook secret, check platform webhook secret
-    platform_secret = os.environ.get("RAZORPAY_PLATFORM_WEBHOOK_SECRET") or os.environ.get("RAZORPAY_WEBHOOK_SECRET")
-    if not verified and platform_secret:
-        try:
-            expected = hmac.new(platform_secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
-            if hmac.compare_digest(expected, signature):
-                verified = True
-            else:
-                raise HTTPException(status_code=400, detail="Invalid platform webhook signature")
-        except Exception as e:
-            if isinstance(e, HTTPException):
-                raise e
-            raise HTTPException(status_code=400, detail="Webhook signature verification failed")
-
-    # In production with live payments, signature verification must pass
-    if not verified and not order.get("mockPayment"):
-        if not signature:
-            raise HTTPException(status_code=400, detail="Missing webhook signature")
-
-    if data.get("event") in ("payment.captured", "order.paid") and order["status"] == "placed":
-        await db.orders.update_one({"order_id": order["order_id"]},
-                                   {"$set": {"status": "paid", "paidAt": iso(now())}})
+    event = data.get("event")
+    payment = data.get("payload", {}).get("payment", {}).get("entity", {})
+    rp_order_id = payment.get("order_id") or data.get("payload", {}).get("order", {}).get("entity", {}).get("id")
+    
+    if rp_order_id and event in ("payment.captured", "order.paid"):
+        await db.execute("UPDATE orders SET status = 'paid', paid_at = $1 WHERE razorpay_order_id = $2 AND status = 'placed'",
+                         iso(now()), rp_order_id)
     return {"status": "ok"}
 
 
 @api.post("/orders/{order_id}/ship")
 async def ship_order(order_id: str, user=Depends(get_current_user)):
-    o = await db.orders.find_one({"order_id": order_id, "sellerId": user["user_id"]})
+    o = await db.fetch_one("SELECT * FROM orders WHERE order_id = $1 AND seller_id = $2", order_id, user["user_id"])
     if not o:
         raise HTTPException(status_code=404, detail="Order not found")
     if o["status"] != "paid":
         raise HTTPException(status_code=400, detail="Order must be paid before shipping")
+    
     otp = security.generate_otp()
-    await db.orders.update_one({"order_id": order_id}, {"$set": {
-        "status": "shipped", "otpCodeHash": security.hash_otp(otp),
-        "otpEnc": security.encrypt_secret(otp), "otpGeneratedAt": iso(now()),
-        "otpAttempts": 0, "otpLocked": False, "shippedAt": iso(now()),
-    }})
-    try:
-        await email_service.send_otp_email(o["buyerEmail"], o["buyerName"], otp,
-                                            f"{FRONTEND_URL}/order/{order_id}")
-    except Exception as e:
-        logger.error(f"otp email failed: {e}")
+    otp_hash = security.hash_otp(otp)
+    otp_enc = security.encrypt_secret(otp)
+    shipped_at = iso(now())
+
+    await db.execute(
+        """
+        UPDATE orders
+        SET status = 'shipped', otp_code_hash = $1, otp_enc = $2, otp_generated_at = $3,
+            otp_attempts = 0, otp_locked = FALSE, shipped_at = $4
+        WHERE order_id = $5
+        """,
+        otp_hash, otp_enc, shipped_at, shipped_at, order_id
+    )
+    asyncio.create_task(email_service.send_otp_email(o["buyer_email"], o["buyer_name"], otp, f"{FRONTEND_URL}/order/{order_id}"))
     return {"status": "shipped"}
-
-
-@api.post("/orders/{order_id}/out-for-delivery")
-async def out_for_delivery(order_id: str, user=Depends(get_current_user)):
-    o = await db.orders.find_one({"order_id": order_id, "sellerId": user["user_id"]})
-    if not o:
-        raise HTTPException(status_code=404, detail="Order not found")
-    if o["status"] != "shipped":
-        raise HTTPException(status_code=400, detail="Order must be shipped first")
-    await db.orders.update_one({"order_id": order_id}, {"$set": {"status": "delivered_pending_otp"}})
-    return {"status": "delivered_pending_otp"}
 
 
 @api.post("/orders/{order_id}/confirm-delivery")
 async def confirm_delivery(order_id: str, body: OtpIn, request: Request, user=Depends(get_current_user)):
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     if not security.check_rate_limit(f"otp_conf:{client_ip}", max_requests=20, window_seconds=60):
         raise HTTPException(status_code=429, detail="Too many verification attempts. Please wait a moment.")
 
-    o = await db.orders.find_one({"order_id": order_id, "sellerId": user["user_id"]})
+    o = await db.fetch_one("SELECT * FROM orders WHERE order_id = $1 AND seller_id = $2", order_id, user["user_id"])
     if not o:
         raise HTTPException(status_code=404, detail="Order not found")
     if o["status"] not in ("shipped", "delivered_pending_otp"):
         raise HTTPException(status_code=400, detail="Order not ready for delivery confirmation")
-    if o.get("otpLocked"):
+    if o.get("otp_locked"):
         raise HTTPException(status_code=423, detail="OTP locked after too many failed attempts")
-    gen = parse_dt(o.get("otpGeneratedAt"))
-    if not o.get("otpCodeHash") or not gen:
-        raise HTTPException(status_code=400, detail="No OTP issued for this order")
-    if now() > gen + timedelta(minutes=OTP_EXPIRY_MIN):
-        raise HTTPException(status_code=400, detail="OTP expired")
-    if not security.verify_otp(body.otp.strip(), o["otpCodeHash"]):
-        attempts = o.get("otpAttempts", 0) + 1
+
+    if not security.verify_otp(body.otp.strip(), o.get("otp_code_hash", "")):
+        attempts = (o.get("otp_attempts") or 0) + 1
         locked = attempts >= OTP_MAX_ATTEMPTS
-        await db.orders.update_one({"order_id": order_id},
-                                   {"$set": {"otpAttempts": attempts, "otpLocked": locked}})
-        detail = "OTP locked after too many failed attempts" if locked else f"Invalid OTP ({attempts}/{OTP_MAX_ATTEMPTS})"
-        raise HTTPException(status_code=400, detail=detail)
-    confirmed = now()
-    window = o.get("acceptanceWindowMinutes", DEFAULT_WINDOW_MIN)
-    await db.orders.update_one({"order_id": order_id}, {"$set": {
-        "status": "delivered_confirmed", "deliveryConfirmedAt": iso(confirmed),
-        "windowExpiresAt": iso(confirmed + timedelta(minutes=window)),
-    }})
-    return {"status": "delivered_confirmed", "windowExpiresAt": iso(confirmed + timedelta(minutes=window))}
+        await db.execute("UPDATE orders SET otp_attempts = $1, otp_locked = $2 WHERE order_id = $3", attempts, locked, order_id)
+        if locked:
+            raise HTTPException(status_code=423, detail="Too many failed attempts. Code locked.")
+        raise HTTPException(status_code=400, detail=f"Invalid OTP code ({attempts}/{OTP_MAX_ATTEMPTS} attempts)")
+
+    delivered_at = iso(now())
+    await db.execute("UPDATE orders SET status = 'delivered', delivered_at = $1 WHERE order_id = $2", delivered_at, order_id)
+    return {"status": "delivered"}
 
 
-@api.post("/buyer/orders/{order_id}/dispute")
-async def raise_dispute(order_id: str, body: DisputeIn, email: str = Query(...)):
-    o = await db.orders.find_one({"order_id": order_id})
-    if not o or o["buyerEmail"] != email.lower().strip():
-        raise HTTPException(status_code=404, detail="Order not found")
-    o = await finalize_if_expired(o)
-    if o["status"] == "completed":
-        raise HTTPException(status_code=400, detail="Acceptance window has closed. No refunds possible.")
-    if o["status"] != "delivered_confirmed":
-        raise HTTPException(status_code=400, detail="Disputes are only allowed after delivery is confirmed")
-    exp = parse_dt(o.get("windowExpiresAt"))
-    if exp and now() >= exp:
-        raise HTTPException(status_code=400, detail="Acceptance window has closed. No refunds possible.")
-    clean_reason = security.sanitize_text(body.reason, 1000)
-    await db.orders.update_one({"order_id": order_id}, {"$set": {
-        "status": "disputed", "disputeRaised": True, "disputeReason": clean_reason,
-        "disputedAt": iso(now()),
-    }})
-    return {"status": "disputed"}
-
-
-# ======================= Subscription (MOCKED checkout) =======================
-# ======================= Subscription (real Razorpay Subscriptions) =======================
-PRO_MONTHLY_AMOUNT = int(os.environ.get("MARKETO_PRO_MONTHLY_PRICE", "199"))
-PRO_YEARLY_AMOUNT = int(os.environ.get("MARKETO_PRO_YEARLY_PRICE", "999"))
+# ======================= Subscription / Billing =======================
+PRO_MONTHLY_AMOUNT = 499
+PRO_YEARLY_AMOUNT = 4990
 SUB_CURRENCY = "INR"
 _PLAN_SPECS = {
-    "monthly": {"period": "monthly", "interval": 1, "amount": PRO_MONTHLY_AMOUNT, "total_count": 120},
-    "yearly": {"period": "yearly", "interval": 1, "amount": PRO_YEARLY_AMOUNT, "total_count": 10},
+    "monthly": {"period": "monthly", "interval": 1, "amount": PRO_MONTHLY_AMOUNT},
+    "yearly": {"period": "yearly", "interval": 1, "amount": PRO_YEARLY_AMOUNT},
 }
 
 
@@ -1138,20 +1169,6 @@ def platform_rp_client():
     if not kid or not ksec:
         raise HTTPException(status_code=503, detail="Platform billing is not configured yet")
     return razorpay.Client(auth=(kid, ksec)), kid
-
-
-async def ensure_plan(rc, interval):
-    spec = _PLAN_SPECS[interval]
-    existing = await db.platform_plans.find_one({"interval": interval, "amount": spec["amount"]}, {"_id": 0})
-    if existing:
-        return existing["plan_id"]
-    plan = await asyncio.to_thread(rc.plan.create, {
-        "period": spec["period"], "interval": spec["interval"],
-        "item": {"name": f"{PREMIUM_TIER} ({interval})", "amount": spec["amount"] * 100, "currency": SUB_CURRENCY},
-    })
-    await db.platform_plans.update_one({"interval": interval, "amount": spec["amount"]},
-                                       {"$set": {"plan_id": plan["id"]}}, upsert=True)
-    return plan["id"]
 
 
 @api.get("/subscription")
@@ -1164,116 +1181,23 @@ async def get_subscription(user=Depends(get_current_user)):
         "plans": {"monthly": PRO_MONTHLY_AMOUNT, "yearly": PRO_YEARLY_AMOUNT},
         "currency": SUB_CURRENCY,
         "billingConfigured": bool(kid),
-        "subscriptionId": user.get("subscriptionId"),
-        "subscriptionInterval": user.get("subscriptionInterval"),
-        "subscriptionExpiresAt": user.get("subscriptionExpiresAt"),
+        "subscriptionId": user.get("subscription_id") or user.get("subscriptionId"),
+        "subscriptionInterval": user.get("subscription_interval") or user.get("subscriptionInterval"),
+        "subscriptionExpiresAt": user.get("subscription_expires_at") or user.get("subscriptionExpiresAt"),
     }
-
-
-@api.post("/subscription/create")
-async def subscription_create(body: SubCreateIn, user=Depends(get_current_user)):
-    if body.interval not in _PLAN_SPECS:
-        raise HTTPException(status_code=400, detail="interval must be monthly or yearly")
-    rc, kid = platform_rp_client()
-    spec = _PLAN_SPECS[body.interval]
-    # Preferred: real auto-recurring Razorpay Subscription (requires Subscriptions enabled on the account)
-    try:
-        plan_id = await ensure_plan(rc, body.interval)
-        sub = await asyncio.to_thread(rc.subscription.create, {
-            "plan_id": plan_id, "total_count": spec["total_count"], "customer_notify": 1,
-            "notes": {"user_id": user["user_id"], "email": user["email"]},
-        })
-        await db.users.update_one({"user_id": user["user_id"]},
-                                  {"$set": {"subscriptionId": sub["id"], "subscriptionInterval": body.interval}})
-        return {"mode": "subscription", "subscriptionId": sub["id"], "keyId": kid, "tier": PREMIUM_TIER,
-                "amount": spec["amount"], "currency": SUB_CURRENCY, "interval": body.interval}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.warning(f"Razorpay Subscriptions unavailable ({type(e).__name__}); using one-time order fallback")
-
-    # Fallback: one-time Order that grants a Pro period on payment (works when Subscriptions isn't enabled)
-    try:
-        order = await asyncio.to_thread(rc.order.create, {
-            "amount": spec["amount"] * 100, "currency": SUB_CURRENCY, "payment_capture": 1,
-            "notes": {"user_id": user["user_id"], "kind": "marketo_pro", "interval": body.interval},
-        })
-    except Exception as e:
-        logger.error(f"one-time pro order failed: {type(e).__name__}: {e!r}")
-        raise HTTPException(status_code=502, detail="Could not start payment")
-    await db.users.update_one({"user_id": user["user_id"]},
-                              {"$set": {"proOrderId": order["id"], "proOrderInterval": body.interval}})
-    return {"mode": "onetime", "orderId": order["id"], "keyId": kid, "tier": PREMIUM_TIER,
-            "amount": spec["amount"], "currency": SUB_CURRENCY, "interval": body.interval}
-
-
-@api.post("/subscription/verify-payment")
-async def verify_payment(body: PayVerifyIn, user=Depends(get_current_user)):
-    rc, kid = platform_rp_client()
-    if user.get("proOrderId") != body.razorpay_order_id:
-        raise HTTPException(status_code=400, detail="Unknown order")
-    try:
-        rc.utility.verify_payment_signature({
-            "razorpay_order_id": body.razorpay_order_id,
-            "razorpay_payment_id": body.razorpay_payment_id,
-            "razorpay_signature": body.razorpay_signature,
-        })
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid payment signature")
-    interval = user.get("proOrderInterval", "monthly")
-    days = 365 if interval == "yearly" else 30
-    expires = now() + timedelta(days=days)
-    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {
-        "subscriptionStatus": "active", "subscriptionExpiresAt": iso(expires),
-        "subscriptionInterval": interval,
-    }})
-    return {"subscriptionStatus": "active", "expiresAt": iso(expires)}
-
-
-@api.post("/webhooks/razorpay-subscription")
-async def razorpay_subscription_webhook(request: Request):
-    payload = await request.body()
-    signature = request.headers.get("X-Razorpay-Signature", "")
-    secret = os.environ.get("RAZORPAY_SUBSCRIPTION_WEBHOOK_SECRET")
-    if secret:
-        try:
-            razorpay.Client(auth=("", "")).utility.verify_webhook_signature(payload.decode(), signature, secret)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid signature")
-    try:
-        data = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid payload")
-    event = data.get("event", "")
-    entity = (((data.get("payload") or {}).get("subscription") or {}).get("entity") or {})
-    sub_id = entity.get("id")
-    if not sub_id:
-        return {"status": "ignored"}
-    user = await db.users.find_one({"subscriptionId": sub_id})
-    if not user:
-        return {"status": "ignored"}
-    active_events = ("subscription.activated", "subscription.charged", "subscription.resumed", "subscription.authenticated")
-    inactive_events = ("subscription.halted", "subscription.cancelled", "subscription.completed", "subscription.paused")
-    new_status = "active" if event in active_events else ("inactive" if event in inactive_events else None)
-    if new_status:
-        await db.users.update_one({"user_id": user["user_id"]},
-                                  {"$set": {"subscriptionStatus": new_status, "subscriptionEvent": event}})
-    return {"status": "ok", "event": event}
 
 
 @api.post("/subscription/simulate")
 async def subscription_simulate(body: SubSimIn, user=Depends(get_current_user)):
-    """TEST-ONLY: simulate the subscription webhook outcome without a real charge."""
     if body.status not in ("active", "inactive"):
         raise HTTPException(status_code=400, detail="status must be active or inactive")
-    await db.users.update_one({"user_id": user["user_id"]},
-                              {"$set": {"subscriptionStatus": body.status}})
+    await db.execute("UPDATE users SET subscription_status = $1 WHERE user_id = $2", body.status, user["user_id"])
     return {"subscriptionStatus": body.status}
 
 
 @api.get("/")
 async def root():
-    return {"service": "Peddle Cart API", "status": "ok"}
+    return {"service": "Stall Wise API", "status": "ok", "engine": "PostgreSQL"}
 
 
 app.include_router(api)
@@ -1315,84 +1239,81 @@ app.add_middleware(
 
 
 # ======================= Startup: indexes + seed =======================
+async def ensure_seller(email, password, name, slug, store_name):
+    u = await db.fetch_one("SELECT * FROM users WHERE email = $1", email.lower())
+    if not u:
+        user_id = new_id("user")
+        await db.execute(
+            """
+            INSERT INTO users (user_id, email, name, password_hash, role, auth_provider, subscription_status, created_at)
+            VALUES ($1, $2, $3, $4, 'seller', 'password', 'active', $5)
+            """,
+            user_id, email.lower(), name, security.hash_password(password), iso(now())
+        )
+        u = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", user_id)
+    
+    s = await db.fetch_one("SELECT * FROM stores WHERE seller_id = $1", u["user_id"])
+    if not s:
+        existing_slug = await db.fetch_one("SELECT * FROM stores WHERE slug = $1", slug)
+        if not existing_slug:
+            await db.execute(
+                """
+                INSERT INTO stores (store_id, seller_id, name, slug, bio, acceptance_window_minutes, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                """,
+                new_id("store"), u["user_id"], store_name, slug,
+                "Handcrafted goods shipped fresh directly to your door.", DEFAULT_WINDOW_MIN, iso(now())
+            )
+    return u
+
+
 async def seed():
-    await db.users.create_index("email", unique=True)
-    await db.users.create_index("user_id", unique=True)
-    await db.stores.create_index("slug", unique=True)
-    await db.products.create_index("storeSlug")
-    await db.orders.create_index("order_id", unique=True)
-    await db.orders.create_index("razorpayOrderId")
-    await db.password_reset_tokens.create_index("expires_at", expireAfterSeconds=0)
-    await db.user_sessions.create_index("session_token")
-    await db.seller_routes.create_index("sellerId", unique=True)
-    await db.files.create_index("storage_path")
-    await db.pending_otps.create_index("otp_id", unique=True)
-    await db.pending_otps.create_index("expires_at", expireAfterSeconds=0)
-
-    async def ensure_seller(email, password, name, slug, store_name):
-        u = await db.users.find_one({"email": email})
-        if not u:
-            uid = new_id("user")
-            u = {"user_id": uid, "email": email, "name": name,
-                 "password_hash": security.hash_password(password), "role": "seller",
-                 "authProvider": "password", "subscriptionStatus": "inactive",
-                 "created_at": iso(now())}
-            await db.users.insert_one(u)
-        s = await db.stores.find_one({"sellerId": u["user_id"]})
-        if not s and not await db.stores.find_one({"slug": slug}):
-            await db.stores.insert_one({"store_id": new_id("store"), "sellerId": u["user_id"],
-                                        "name": store_name, "slug": slug,
-                                        "acceptanceWindowMinutes": DEFAULT_WINDOW_MIN,
-                                        "created_at": iso(now())})
-        return u
-
     admin_email = os.environ.get("ADMIN_EMAIL", "dassantana135@gmail.com")
     admin_pass = os.environ.get("ADMIN_PASSWORD", "Admin@StallWise2026")
-    owner = await ensure_seller(admin_email, admin_pass,
-                                "Marketo Owner", "demo-store", "Demo Store")
-    await ensure_seller("seller2@marketo-demo.com", "Seller2@2026", "Artisan Seller",
-                        "artisan-shop", "Artisan Shop")
-    await db.stores.update_one({"slug": "demo-store", "bio": {"$exists": False}},
-                               {"$set": {"bio": "Small-batch pantry goods and everyday basics, packed and shipped by hand."}})
-    await db.stores.update_one({"slug": "artisan-shop", "bio": {"$exists": False}},
-                               {"$set": {"bio": "Handmade ceramics and textiles from a tiny home studio."}})
+    owner = await ensure_seller(admin_email, admin_pass, "Stall Wise Merchant", "demo-store", "Demo Store")
+    await ensure_seller("artisan@stallwise.in", "Artisan@2026", "Artisan Studio", "artisan-shop", "Artisan Shop")
 
-    if await db.products.count_documents({"storeSlug": "demo-store"}) == 0:
-        await db.products.insert_many([
-            {"product_id": new_id("prod"), "sellerId": owner["user_id"], "storeSlug": "demo-store",
-             "title": "Organic Honey (500g)", "description": "Raw wildflower honey",
-             "price": 350.0, "stock": 40, "optionGroups": [], "active": True,
-             "image": None, "created_at": iso(now())},
-            {"product_id": new_id("prod"), "sellerId": owner["user_id"], "storeSlug": "demo-store",
-             "title": "Cotton T-Shirt", "description": "Handmade, soft cotton",
-             "price": 600.0, "stock": None, "active": True, "image": None,
-             "optionGroups": [{"name": "Size", "options": [
-                 {"label": "S", "priceDelta": 0, "stock": 10},
-                 {"label": "M", "priceDelta": 0, "stock": 15},
-                 {"label": "L", "priceDelta": 50, "stock": 8}]}],
-             "created_at": iso(now())},
-        ])
+    prod_count = await db.fetch_val("SELECT COUNT(*) FROM products WHERE store_slug = 'demo-store'")
+    if not prod_count:
+        await db.execute(
+            """
+            INSERT INTO products (product_id, seller_id, store_slug, title, description, price, stock, option_groups, active, created_at)
+            VALUES 
+            ($1, $2, 'demo-store', 'Organic Honey (500g)', 'Raw wildflower honey, harvested locally.', 350.0, 40, '[]'::jsonb, TRUE, $3),
+            ($4, $2, 'demo-store', 'Cotton Artisan T-Shirt', 'Handmade, soft breathable organic cotton.', 600.0, 50, $5, TRUE, $3)
+            """,
+            new_id("prod"), owner["user_id"], iso(now()),
+            new_id("prod"),
+            json.dumps([{
+                "name": "Size",
+                "options": [
+                    {"label": "S", "priceDelta": 0, "stock": 10},
+                    {"label": "M", "priceDelta": 0, "stock": 25},
+                    {"label": "L", "priceDelta": 50, "stock": 15}
+                ]
+            }])
+        )
 
 
 @app.on_event("startup")
 async def on_startup():
     try:
-        await client.admin.command("ping")
-        logger.info("Successfully connected to MongoDB database!")
+        await db.init_db()
     except Exception as e:
-        logger.error(f"MongoDB connection failed: {e}. Check that MONGO_URL is set in your Railway service variables!")
+        logger.error(f"Database initialization failed: {e}. Check that DATABASE_URL is set in your Railway variables!")
     try:
         await asyncio.to_thread(storage.init_storage)
         logger.info("Object storage initialized")
     except Exception as e:
         logger.error(f"storage init failed: {e}")
     try:
-        await seed()
-        logger.info("Marketo startup seed complete")
+        if db._pool:
+            await seed()
+            logger.info("Stall Wise startup seed complete")
     except Exception as e:
         logger.error(f"seed error: {e}")
 
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    client.close()
+    await db.close_db()
