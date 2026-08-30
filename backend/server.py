@@ -33,7 +33,7 @@ FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 PREMIUM_TIER = "Stall Wise Pro"
 FREE_TIER = "Free Plan"
 COMMISSION_RATE_FREE = 0.10
-COMMISSION_RATE_PRO = 0.00
+COMMISSION_RATE_PRO = 0.10
 DEFAULT_WINDOW_MIN = 120
 OTP_EXPIRY_MIN = 4320  # 3 days
 OTP_MAX_ATTEMPTS = 5
@@ -1201,8 +1201,8 @@ _PLAN_SPECS = {
 }
 
 # Razorpay platform keys (live)
-_RP_KEY_ID = os.environ.get("RAZORPAY_KEY_ID") or os.environ.get("RAZORPAY_PLATFORM_KEY_ID") or "rzp_live_TVs3r96Uvj8B1S"
-_RP_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET") or os.environ.get("RAZORPAY_PLATFORM_KEY_SECRET") or "xM9IugMkJB74bdDbH7UWh3Zi"
+_RP_KEY_ID = "rzp_live_TVs3r96Uvj8B1S"
+_RP_KEY_SECRET = "xM9IugMkJB74bdDbH7UWh3Zi"
 
 
 def platform_rp_client():

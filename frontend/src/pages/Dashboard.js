@@ -1188,7 +1188,7 @@ function SubscriptionSection({ onChange }) {
   return (
     <Panel
       title="Store Plan & Commission Options"
-      subtitle="Choose between the Free Plan (10% commission on sales) or Stall Wise Pro (0% commission with full earnings retained)."
+      subtitle="Choose between the Free Plan (10% commission on sales) or Stall Wise Pro (ad-free storefront)."
       testId="subscription-panel"
       action={
         <span
@@ -1199,7 +1199,7 @@ function SubscriptionSection({ onChange }) {
               : "bg-neutral-100 text-neutral-700 border-neutral-200"
           }`}
         >
-          {active ? "⚡ Pro Active (0% Commission)" : "Free Plan (10% Commission)"}
+          {active ? "⚡ Pro Active (Ad-Free Storefront)" : "Free Plan (10% Commission)"}
         </span>
       }
     >
@@ -1209,7 +1209,7 @@ function SubscriptionSection({ onChange }) {
           <div className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-2xs transition-all hover:border-neutral-300">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">Monthly Pro</span>
-              <span className="rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold">0% Commission</span>
+              <span className="rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold">Ad-Free</span>
             </div>
             <p className="mt-3 text-3xl font-black text-[#0A0A0A]">
               ₹{sub?.plans?.monthly || 199}
@@ -1217,7 +1217,7 @@ function SubscriptionSection({ onChange }) {
             </p>
             <ul className="mt-4 space-y-2 text-xs text-neutral-600">
               <li className="flex items-center gap-2">
-                <Check className="h-3.5 w-3.5 text-emerald-600" /> 0% Platform Commission (Keep 100% of sales)
+                <Check className="h-3.5 w-3.5 text-emerald-600" /> Ad-Free Storefront (Remove all platform ads)
               </li>
               <li className="flex items-center gap-2">
                 <Check className="h-3.5 w-3.5 text-emerald-600" /> Direct bank settlements
@@ -1252,7 +1252,7 @@ function SubscriptionSection({ onChange }) {
             </p>
             <ul className="mt-4 space-y-2 text-xs text-neutral-300">
               <li className="flex items-center gap-2">
-                <Check className="h-3.5 w-3.5 text-[#FF4F00]" /> 0% Platform Commission all year long
+                <Check className="h-3.5 w-3.5 text-[#FF4F00]" /> Ad-Free Storefront all year long
               </li>
               <li className="flex items-center gap-2">
                 <Check className="h-3.5 w-3.5 text-[#FF4F00]" /> Save ₹889 compared to monthly billing
@@ -1683,7 +1683,7 @@ export default function Dashboard() {
             </p>
             <div className="mt-2 flex items-center gap-1.5 text-[11px] font-bold text-emerald-600">
               <TrendingUp className="h-3.5 w-3.5" />
-              <span>100% Payout Rate</span>
+              <span>Standard Payout Rate</span>
               <span className="text-neutral-400 font-normal">· Direct to Bank</span>
             </div>
           </div>
@@ -1728,7 +1728,7 @@ export default function Dashboard() {
           >
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">
-                {metrics.isPro ? "0% Pro Commission" : "Net Seller Payout"}
+                {"Net Seller Payout"}
               </span>
               <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-orange-50 text-[#FF4F00]">
                 <Percent className="h-4 w-4" />
@@ -1738,7 +1738,7 @@ export default function Dashboard() {
               ₹{metrics.netPayout.toLocaleString()}
             </p>
             <div className="mt-2 text-[11px] font-bold text-neutral-500">
-              {metrics.isPro ? "100% earnings kept with Pro Subscription" : "90% net payout (Click to Upgrade Pro →)"}
+              {metrics.isPro ? "90% net payout (Pro User)" : "90% net payout (Click to Upgrade Pro →)"}
             </div>
           </div>
         </div>

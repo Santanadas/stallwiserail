@@ -36,7 +36,7 @@ export default function About() {
       <section>
         <H2>How we make money</H2>
         <p className="mt-2">
-          Stall Wise offers two flexible options: (1) Free Plan with a transparent 10% platform commission on completed orders, or (2) Stall Wise Pro (₹199/month or ₹1,499/year) with 0% platform commission, allowing active merchants to keep 100% of their earnings.
+          Stall Wise offers two flexible options: (1) Free Plan with a transparent 10% platform commission on completed orders, or (2) Stall Wise Pro (₹199/month or ₹1,499/year) which removes ads from your storefront and gives you a Verified Pro Seller Badge while maintaining the standard 10% commission.
         </p>
       </section>
     </StaticPage>

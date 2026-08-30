@@ -57,9 +57,9 @@ const PLANS = [
     name: "Pro Monthly",
     price: "₹199",
     period: "per month",
-    note: "0% commission — keep 100% of sales",
+    note: "Ad-free storefront & verified badge",
     feats: [
-      "0% platform commission (keep 100%)",
+      "No ads on your storefront",
       "Direct bank settlements",
       "Verified Pro Seller Badge",
       "Storefront QR Code & Analytics",
@@ -72,10 +72,10 @@ const PLANS = [
     name: "Pro Yearly",
     price: "₹1,499",
     period: "per year",
-    note: "0% commission, save ₹889/yr (~37% off)",
+    note: "Save ₹889/yr (~37% off)",
     feats: [
       "Everything in Pro Monthly",
-      "0% platform commission all year",
+      "No ads on your storefront",
       "Save ₹889 compared to monthly",
       "Priority customer & payout support",
       "Best value for growing brands",
@@ -88,7 +88,7 @@ const PLANS = [
 const FAQS = [
   {
     q: "How do payouts work on Stall Wise?",
-    a: "Stall Wise routes customer payments directly into your linked bank account via Razorpay. You can start free with a 10% platform commission on completed sales, or upgrade to Stall Wise Pro (₹199/mo or ₹1,499/yr) for 0% commission to keep 100% of your earnings.",
+    a: "Stall Wise routes customer payments directly into your linked bank account via Razorpay. We charge a standard 10% platform commission on completed sales. You can upgrade to Stall Wise Pro (₹199/mo or ₹1,499/yr) for an ad-free storefront and verified badge.",
   },
   {
     q: "How fast do I receive payments from buyers?",
@@ -177,7 +177,7 @@ export default function Landing() {
               </h1>
               <p className="mt-5 max-w-xl text-sm leading-relaxed text-[#525252] sm:mt-6 sm:text-base md:text-lg">
                 Stall Wise gives anyone a real storefront at <span className="font-semibold text-[#0A0A0A]">stallwise.in/your-name</span> in
-                minutes. Start free with direct bank payouts, or upgrade to Pro to keep 100% of your earnings.
+                minutes. Start free with direct bank payouts, or upgrade to Pro for an ad-free storefront.
               </p>
               <div className="mt-6 flex flex-col gap-3 sm:mt-8 sm:flex-row sm:items-center">
                 <Link
@@ -216,7 +216,7 @@ export default function Landing() {
                 />
                 <div className="absolute -bottom-4 -left-3 border-2 border-[#0A0A0A] bg-white p-3 shadow-[4px_4px_0px_0px_rgba(255,79,0,1)] sm:-bottom-6 sm:-left-4 sm:p-4 sm:shadow-[6px_6px_0px_0px_rgba(255,79,0,1)]">
                   <p className="text-[10px] font-bold uppercase tracking-widest text-[#525252] sm:text-xs">Paid out</p>
-                  <p className="mk-head text-xl font-black tracking-tighter sm:text-2xl">100%</p>
+                  <p className="mk-head text-xl font-black tracking-tighter sm:text-2xl">10%</p>
                 </div>
               </div>
             </div>
@@ -294,7 +294,7 @@ export default function Landing() {
               Two simple ways to sell. Zero hidden costs.
             </h2>
             <p className="mt-3 max-w-xl text-sm leading-relaxed text-[#525252] sm:mt-4 sm:text-base">
-              Start free with a 10% commission on completed sales, or upgrade to Stall Wise Pro (₹199/mo or ₹1,499/yr) for 0% commission and keep 100% of your earnings.
+              Start free with a 10% commission on completed sales, or upgrade to Stall Wise Pro (₹199/mo or ₹1,499/yr) for an ad-free storefront and premium badge.
             </p>
             <div className="mt-8 grid grid-cols-1 gap-6 sm:mt-12 md:grid-cols-3">
               {PLANS.map((p, i) => (

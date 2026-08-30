@@ -59,7 +59,7 @@ export default function BuyerOrder() {
     setErr(""); setMsg(""); setBusy(true);
     try {
       if (order.mockPayment) {
-        await api.post(`/orders/${orderId}/simulate-payment`);
+        await api.post(`/orders/${orderId}/mock-pay`);
         setMsg("Payment simulated (MOCK). Your order is confirmed.");
         load();
       } else if (order.razorpayOrderId) {

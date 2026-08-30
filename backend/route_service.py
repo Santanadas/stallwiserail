@@ -21,8 +21,8 @@ def _mock_enabled() -> bool:
 
 
 def _keys():
-    kid = os.environ.get("RAZORPAY_KEY_ID") or os.environ.get("RAZORPAY_PLATFORM_KEY_ID")
-    ksec = os.environ.get("RAZORPAY_KEY_SECRET") or os.environ.get("RAZORPAY_PLATFORM_KEY_SECRET")
+    kid = "rzp_live_TVs3r96Uvj8B1S"
+    ksec = "xM9IugMkJB74bdDbH7UWh3Zi"
     return kid, ksec
 
 
