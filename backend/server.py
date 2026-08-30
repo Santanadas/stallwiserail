@@ -1195,9 +1195,14 @@ async def subscription_simulate(body: SubSimIn, user=Depends(get_current_user)):
     return {"subscriptionStatus": body.status}
 
 
-@api.get("/")
+@app.api_route("/health", methods=["GET", "HEAD"])
+async def health_check():
+    return {"status": "ok", "service": "stallwise", "db": bool(db._pool)}
+
+
+@api.api_route("/", methods=["GET", "HEAD"])
 async def root():
-    return {"service": "Stall Wise API", "status": "ok", "engine": "PostgreSQL"}
+    return {"service": "Stall Wise API", "status": "ok", "engine": "PostgreSQL", "db_connected": bool(db._pool)}
 
 
 app.include_router(api)
@@ -1212,12 +1217,12 @@ if os.path.isdir(DIST_DIR):
     if os.path.isdir(assets_dir):
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
-    @app.get("/{full_path:path}")
+    @app.api_route("/{full_path:path}", methods=["GET", "HEAD"])
     async def serve_spa(full_path: str):
         if full_path.startswith("api") or full_path.startswith("uploads"):
             raise HTTPException(status_code=404, detail="Not found")
         file_path = os.path.join(DIST_DIR, full_path)
-        if os.path.isfile(file_path):
+        if full_path and os.path.isfile(file_path):
             return FileResponse(file_path)
         index_file = os.path.join(DIST_DIR, "index.html")
         if os.path.isfile(index_file):
