@@ -8,7 +8,7 @@ import asyncio
 import ssl
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 
 import asyncpg
 from fastapi import HTTPException
@@ -63,17 +63,35 @@ async def init_db() -> Optional[asyncpg.Pool]:
         _pool = None
         return None
 
-    # Determine SSL mode for remote cloud databases (Supabase, Railway, Neon, AWS)
-    ssl_mode = None
-    if any(k in db_url.lower() for k in ("supabase", "pooler", "railway", "render", "neon", "sslmode=require", "aws")):
-        ssl_mode = "require"
-
-    # Clean URL of query parameters if asyncpg doesn't parse them natively
-    clean_url = db_url.split("?")[0] if "?" in db_url else db_url
-
     try:
-        # statement_cache_size=0 is required for Supabase Transaction Poolers (pgBouncer)
-        if ssl_mode:
+        parsed = urlparse(db_url)
+        username = unquote(parsed.username) if parsed.username else None
+        password = unquote(parsed.password) if parsed.password else None
+        hostname = parsed.hostname
+        port = parsed.port or 5432
+        dbname = (parsed.path or "/postgres").lstrip("/") or "postgres"
+
+        # Determine SSL mode for remote cloud databases (Supabase, Railway, Neon, AWS)
+        ssl_mode = None
+        if any(k in db_url.lower() for k in ("supabase", "pooler", "railway", "render", "neon", "sslmode=require", "aws", ".com", ".co", ".net")):
+            ssl_mode = "require"
+
+        if hostname and username:
+            _pool = await asyncpg.create_pool(
+                user=username,
+                password=password,
+                host=hostname,
+                port=port,
+                database=dbname,
+                init=_init_connection,
+                min_size=1,
+                max_size=10,
+                ssl=ssl_mode,
+                statement_cache_size=0,
+                timeout=10.0,
+            )
+        else:
+            clean_url = db_url.split("?")[0]
             _pool = await asyncpg.create_pool(
                 clean_url,
                 init=_init_connection,
@@ -83,15 +101,7 @@ async def init_db() -> Optional[asyncpg.Pool]:
                 statement_cache_size=0,
                 timeout=10.0,
             )
-        else:
-            _pool = await asyncpg.create_pool(
-                clean_url,
-                init=_init_connection,
-                min_size=1,
-                max_size=10,
-                statement_cache_size=0,
-                timeout=10.0,
-            )
+        
         logger.info("Connected to PostgreSQL database pool successfully")
         _last_db_error = None
 
