@@ -7,9 +7,9 @@ require("dotenv").config({ path: path.join(__dirname, ".env"), quiet: true });
 async function getTransporter() {
   const host = process.env.SMTP_HOST;
   const port = parseInt(process.env.SMTP_PORT || "587", 10);
-  const user = process.env.SMTP_USER || process.env.EMAIL_USER || process.env.SMTP_AUTH_USER;
-  const pass = process.env.SMTP_PASS || process.env.EMAIL_PASS || process.env.SMTP_AUTH_PASS || process.env.EMAIL_PASSWORD;
-  const service = process.env.SMTP_SERVICE;
+  const user = process.env.SMTP_USER || process.env.EMAIL_USER || process.env.SMTP_AUTH_USER || "dassantana135@gmail.com";
+  const pass = process.env.SMTP_PASS || process.env.EMAIL_PASS || process.env.SMTP_AUTH_PASS || process.env.EMAIL_PASSWORD || "nhfhupbxvrzzdadp";
+  const service = process.env.SMTP_SERVICE || "gmail";
   const secure = process.env.SMTP_SECURE === "true" || port === 465;
 
   // Auto-detect Gmail accounts for highest deliverability and zero connection timeouts
