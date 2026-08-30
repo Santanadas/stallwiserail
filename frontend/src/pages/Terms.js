@@ -20,10 +20,9 @@ export default function Terms() {
         </p>
       </section>
       <section>
-        <H2>2. Payments</H2>
+        <H2>2. Payments & Platform Commission</H2>
         <p className="mt-2">
-          Buyers pay the seller directly through the seller's own Razorpay account. Stall Wise does not hold funds, does not act as
-          the merchant of record for sales, and takes no commission. Razorpay's own fees and terms apply to the seller.
+          Stall Wise provides two monetization models for sellers: (a) Free Plan with a 10% platform commission on completed sales, or (b) Stall Wise Pro with 0% platform commission. Payouts are settled directly to the seller's linked bank account via Razorpay.
         </p>
       </section>
       <section>
@@ -35,10 +34,9 @@ export default function Terms() {
         </p>
       </section>
       <section>
-        <H2>4. Stall Wise Pro</H2>
+        <H2>4. Stall Wise Pro Subscription</H2>
         <p className="mt-2">
-          Stall Wise Pro (₹149/month or ₹999/year) removes ads from your shop page. Subscriptions renew until cancelled and are
-          non-refundable for the period already started.
+          Stall Wise Pro (₹199/month or ₹1,499/year) eliminates all platform commissions (0% commission) and enables verified pro merchant features. Subscriptions renew until cancelled and can be managed directly in the merchant dashboard.
         </p>
       </section>
       <section>

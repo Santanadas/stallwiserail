@@ -36,8 +36,7 @@ export default function About() {
       <section>
         <H2>How we make money</H2>
         <p className="mt-2">
-          Free shops display small Stall Wise ads. Sellers who want a clean, ad-free page subscribe to Stall Wise Pro at ₹149 a month or
-          ₹999 a year. That subscription is the only thing we charge for — never a cut of your sales.
+          Stall Wise offers two flexible options: (1) Free Plan with a transparent 10% platform commission on completed orders, or (2) Stall Wise Pro (₹199/month or ₹1,499/year) with 0% platform commission, allowing active merchants to keep 100% of their earnings.
         </p>
       </section>
     </StaticPage>

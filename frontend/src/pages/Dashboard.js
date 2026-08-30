@@ -1158,19 +1158,19 @@ function SubscriptionSection({ user, onChange }) {
 
   return (
     <Panel
-      title="Store Tier & Stall Wise Pro"
-      subtitle="Selling on Stall Wise is 100% free with 0% commission. Upgrade to Stall Wise Pro to remove all platform ads."
+      title="Store Plan & Commission Options"
+      subtitle="Choose between the Free Plan (10% commission on sales) or Stall Wise Pro (0% commission with full earnings retained)."
       testId="subscription-panel"
       action={
         <span
           data-testid="sub-status"
           className={`rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-wider ${
             active
-              ? "bg-neutral-900 text-white border-neutral-900"
+              ? "bg-emerald-900 text-emerald-100 border-emerald-700"
               : "bg-neutral-100 text-neutral-700 border-neutral-200"
           }`}
         >
-          {active ? "⚡ Stall Wise Pro Active" : "Community Free Tier"}
+          {active ? "⚡ Pro Active (0% Commission)" : "Free Plan (10% Commission)"}
         </span>
       }
     >
@@ -1180,23 +1180,26 @@ function SubscriptionSection({ user, onChange }) {
           <div className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-2xs transition-all hover:border-neutral-300">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">Monthly Pro</span>
-              <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-bold text-neutral-700">Cancel anytime</span>
+              <span className="rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold">0% Commission</span>
             </div>
             <p className="mt-3 text-3xl font-black text-[#0A0A0A]">
-              ₹{sub?.plans?.monthly || 149}
+              ₹{sub?.plans?.monthly || 199}
               <span className="text-xs font-medium text-neutral-500"> / month</span>
             </p>
             <ul className="mt-4 space-y-2 text-xs text-neutral-600">
               <li className="flex items-center gap-2">
-                <Check className="h-3.5 w-3.5 text-emerald-600" /> Remove all ads from your storefront
+                <Check className="h-3.5 w-3.5 text-emerald-600" /> 0% Platform Commission (Keep 100% of sales)
               </li>
               <li className="flex items-center gap-2">
-                <Check className="h-3.5 w-3.5 text-emerald-600" /> Verified Pro Seller Badge
+                <Check className="h-3.5 w-3.5 text-emerald-600" /> Direct bank settlements
+              </li>
+              <li className="flex items-center gap-2">
+                <Check className="h-3.5 w-3.5 text-emerald-600" /> Verified Pro Seller Badge & QR code
               </li>
             </ul>
             <div className="mt-6">
               <Btn variant="outline" data-testid="sub-monthly-btn" onClick={() => subscribe("monthly")} className="w-full">
-                Upgrade Monthly
+                {active ? "Switch to Monthly (₹199/mo)" : "Upgrade to Pro Monthly (₹199)"}
               </Btn>
             </div>
           </div>
@@ -1206,23 +1209,26 @@ function SubscriptionSection({ user, onChange }) {
             <div className="absolute -right-8 -top-8 h-28 w-28 rounded-full bg-[#FF4F00]/20 blur-2xl pointer-events-none" />
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold uppercase tracking-wider text-neutral-400">Annual Pro Plan</span>
-              <span className="rounded-full bg-[#FF4F00] px-2.5 py-0.5 text-[10px] font-bold text-white">Save 45%</span>
+              <span className="rounded-full bg-[#FF4F00] px-2.5 py-0.5 text-[10px] font-bold text-white">Save ₹889 (~37% off)</span>
             </div>
             <p className="mt-3 text-3xl font-black text-white">
-              ₹{sub?.plans?.yearly || 999}
+              ₹{sub?.plans?.yearly || 1499}
               <span className="text-xs font-medium text-neutral-400"> / year</span>
             </p>
             <ul className="mt-4 space-y-2 text-xs text-neutral-300">
               <li className="flex items-center gap-2">
-                <Check className="h-3.5 w-3.5 text-[#FF4F00]" /> 100% Ad-Free Storefront All Year
+                <Check className="h-3.5 w-3.5 text-[#FF4F00]" /> 0% Platform Commission all year long
               </li>
               <li className="flex items-center gap-2">
-                <Check className="h-3.5 w-3.5 text-[#FF4F00]" /> Priority Payout Verification
+                <Check className="h-3.5 w-3.5 text-[#FF4F00]" /> Save ₹889 compared to monthly billing
+              </li>
+              <li className="flex items-center gap-2">
+                <Check className="h-3.5 w-3.5 text-[#FF4F00]" /> Priority customer and dispute resolution
               </li>
             </ul>
             <div className="mt-6">
               <Btn variant="primary" data-testid="sub-yearly-btn" onClick={() => subscribe("yearly")} className="w-full">
-                Upgrade Annual (Best Value)
+                Upgrade Annual (₹1,499/yr)
               </Btn>
             </div>
           </div>
@@ -1339,21 +1345,25 @@ export default function Dashboard() {
 
   // Executive Metrics Calculations
   const metrics = useMemo(() => {
+    const isPro = user?.subscriptionStatus === "active";
     const grossRevenue = orders.reduce((sum, o) => sum + (o.amount || 0), 0);
     const completedOrders = orders.filter((o) => o.status === "completed" || o.status === "delivered_confirmed").length;
     const pendingFulfillment = orders.filter((o) => o.status === "paid" || o.status === "shipped" || o.status === "delivered_pending_otp").length;
     const aov = orders.length > 0 ? Math.round(grossRevenue / orders.length) : 0;
-    const savedCommission = Math.round(grossRevenue * 0.18); // 18% standard marketplace savings
+    const netPayout = isPro ? grossRevenue : Math.round(grossRevenue * 0.90);
+    const commissionPaidOrSaved = Math.round(grossRevenue * 0.10);
 
     return {
       grossRevenue,
+      netPayout,
       totalOrders: orderCount,
       completedOrders,
       pendingFulfillment,
       aov,
-      savedCommission,
+      commissionPaidOrSaved,
+      isPro,
     };
-  }, [orders, orderCount]);
+  }, [orders, orderCount, user?.subscriptionStatus]);
 
   // Real 7-Day Performance Trend
   const performance7Days = useMemo(() => {
@@ -1616,19 +1626,21 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Card 4: Platform Fee Saved */}
+          {/* Card 4: Plan Monetization / Net Earnings */}
           <div className="overflow-hidden rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-2xs transition-all hover:shadow-sm">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">0% Cut Savings</span>
+              <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">
+                {metrics.isPro ? "0% Pro Commission" : "Net Seller Payout"}
+              </span>
               <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-orange-50 text-[#FF4F00]">
                 <Percent className="h-4 w-4" />
               </div>
             </div>
             <p className="mt-2 text-2xl sm:text-3xl font-black text-emerald-600">
-              ₹{metrics.savedCommission.toLocaleString()}
+              ₹{metrics.netPayout.toLocaleString()}
             </p>
             <div className="mt-2 text-[11px] font-bold text-neutral-500">
-              Saved vs 18% traditional marketplace fees
+              {metrics.isPro ? "100% earnings kept with Pro Subscription" : "90% net payout (10% platform commission)"}
             </div>
           </div>
         </div>

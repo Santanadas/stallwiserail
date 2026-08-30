@@ -30,8 +30,10 @@ import storage
 import route_service
 
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
-PREMIUM_TIER = "Stall Wise Pro"
-FREE_TIER = "Community"
+PREMIUM_TIER = "Stall Wise Pro (0% Commission)"
+FREE_TIER = "Free Plan (10% Commission)"
+COMMISSION_RATE_FREE = 0.10
+COMMISSION_RATE_PRO = 0.00
 DEFAULT_WINDOW_MIN = 120
 OTP_EXPIRY_MIN = 4320  # 3 days
 OTP_MAX_ATTEMPTS = 5
@@ -994,6 +996,9 @@ async def checkout(slug: str, body: OrderIn, request: Request):
 
     # Razorpay Route Order Split Check
     route = await db.fetch_one("SELECT * FROM seller_routes WHERE seller_id = $1", store["seller_id"])
+    seller = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", store["seller_id"])
+    seller_sub = await effective_sub_status(seller) if seller else "inactive"
+    commission_pct = COMMISSION_RATE_PRO if seller_sub == "active" else COMMISSION_RATE_FREE
     rc, plat_kid, _ = route_service.platform_client()
     rp_order_id = None
     rp_key_id = None
@@ -1002,12 +1007,17 @@ async def checkout(slug: str, body: OrderIn, request: Request):
     if route and route.get("mode") == "razorpay" and route.get("account_id") and rc:
         try:
             amount_paise = int(round(total * 100))
+            seller_payout_paise = int(round(amount_paise * (1.0 - commission_pct)))
             rp = await asyncio.to_thread(rc.order.create, {
                 "amount": amount_paise, "currency": "INR", "payment_capture": 1,
                 "receipt": order_id[:40],
                 "transfers": [{
-                    "account": route["account_id"], "amount": amount_paise, "currency": "INR",
-                    "on_hold": 0, "notes": {"platform": "Stall Wise", "storeSlug": store["slug"]},
+                    "account": route["account_id"], "amount": seller_payout_paise, "currency": "INR",
+                    "on_hold": 0, "notes": {
+                        "platform": "Stall Wise",
+                        "storeSlug": store["slug"],
+                        "commission": f"{int(commission_pct * 100)}%",
+                    },
                 }],
             })
             rp_order_id = rp["id"]
@@ -1167,8 +1177,8 @@ async def confirm_delivery(order_id: str, body: OtpIn, request: Request, user=De
 
 
 # ======================= Subscription / Billing =======================
-PRO_MONTHLY_AMOUNT = 499
-PRO_YEARLY_AMOUNT = 4990
+PRO_MONTHLY_AMOUNT = 199
+PRO_YEARLY_AMOUNT = 1499
 SUB_CURRENCY = "INR"
 _PLAN_SPECS = {
     "monthly": {"period": "monthly", "interval": 1, "amount": PRO_MONTHLY_AMOUNT},
@@ -1190,7 +1200,9 @@ async def get_subscription(user=Depends(get_current_user)):
     kid = os.environ.get("RAZORPAY_KEY_ID") or os.environ.get("RAZORPAY_PLATFORM_KEY_ID")
     return {
         "subscriptionStatus": status,
-        "premiumTier": PREMIUM_TIER, "freeTier": FREE_TIER,
+        "premiumTier": PREMIUM_TIER,
+        "freeTier": FREE_TIER,
+        "commissionRate": 0.00 if status == "active" else 0.10,
         "plans": {"monthly": PRO_MONTHLY_AMOUNT, "yearly": PRO_YEARLY_AMOUNT},
         "currency": SUB_CURRENCY,
         "billingConfigured": bool(kid),

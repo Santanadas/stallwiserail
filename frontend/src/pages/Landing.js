@@ -39,9 +39,50 @@ const REASONS = [
 ];
 
 const PLANS = [
-  { name: "Free", price: "₹0", period: "forever", note: "Shows Stall Wise ads on your shop", feats: ["Unlimited products", "0% commission", "Delivery OTP + dispute protection"], dark: false, badge: null },
-  { name: "Pro Monthly", price: "₹149", period: "per month", note: "Ad-free shop page", feats: ["Everything in Free", "No ads on your shop", "Cancel anytime"], dark: false, badge: null },
-  { name: "Pro Yearly", price: "₹999", period: "per year", note: "Ad-free, best value", feats: ["Everything in Pro Monthly", "Save ₹789 a year", "Priority support"], dark: true, badge: "Best value" },
+  {
+    name: "Free Plan",
+    price: "₹0",
+    period: "forever",
+    note: "10% commission per completed sale",
+    feats: [
+      "No monthly or annual subscription",
+      "10% platform commission per order",
+      "Unlimited product listings",
+      "Delivery OTP + dispute protection",
+    ],
+    dark: false,
+    badge: "Free to start",
+  },
+  {
+    name: "Pro Monthly",
+    price: "₹199",
+    period: "per month",
+    note: "0% commission — keep 100% of sales",
+    feats: [
+      "0% platform commission (keep 100%)",
+      "Direct bank settlements",
+      "Verified Pro Seller Badge",
+      "Storefront QR Code & Analytics",
+      "Cancel anytime with 1-click",
+    ],
+    dark: false,
+    badge: null,
+  },
+  {
+    name: "Pro Yearly",
+    price: "₹1,499",
+    period: "per year",
+    note: "0% commission, save ₹889/yr (~37% off)",
+    feats: [
+      "Everything in Pro Monthly",
+      "0% platform commission all year",
+      "Save ₹889 compared to monthly",
+      "Priority customer & payout support",
+      "Best value for growing brands",
+    ],
+    dark: true,
+    badge: "Best value",
+  },
 ];
 
 const FAQS = [
@@ -250,10 +291,10 @@ export default function Landing() {
         <section id="pricing" className="border-b border-[#0A0A0A] bg-white" data-testid="pricing-section">
           <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 sm:py-16 md:px-10 md:py-24">
             <h2 className="mk-head max-w-2xl text-2xl font-black tracking-tighter sm:text-3xl md:text-4xl">
-              Selling is free. Going ad-free is optional.
+              Two simple ways to sell. Zero hidden costs.
             </h2>
             <p className="mt-3 max-w-xl text-sm leading-relaxed text-[#525252] sm:mt-4 sm:text-base">
-              Free shops carry small Stall Wise ads. Stall Wise Pro removes them — that subscription is the only thing we ever charge for.
+              Start free with a 10% commission on completed sales, or upgrade to Stall Wise Pro (₹199/mo or ₹1,499/yr) for 0% commission and keep 100% of your earnings.
             </p>
             <div className="mt-8 grid grid-cols-1 gap-6 sm:mt-12 md:grid-cols-3">
               {PLANS.map((p, i) => (
