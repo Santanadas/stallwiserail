@@ -29,8 +29,18 @@ import storage
 import route_service
 
 # ---------- DB ----------
-client = AsyncIOMotorClient(os.environ["MONGO_URL"])
-db = client[os.environ["DB_NAME"]]
+MONGO_URL = (
+    os.environ.get("MONGO_URL")
+    or os.environ.get("MONGODB_URL")
+    or os.environ.get("MONGO_PUBLIC_URL")
+    or os.environ.get("MONGO_PRIVATE_URL")
+    or os.environ.get("DATABASE_URL")
+    or os.environ.get("MONGODB_URI")
+    or "mongodb://127.0.0.1:27017"
+)
+DB_NAME = os.environ.get("DB_NAME", "stallwise")
+client = AsyncIOMotorClient(MONGO_URL)
+db = client[DB_NAME]
 
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 PREMIUM_TIER = "Stall Wise Pro"
@@ -1309,7 +1319,9 @@ async def seed():
                                         "created_at": iso(now())})
         return u
 
-    owner = await ensure_seller(os.environ["ADMIN_EMAIL"], os.environ["ADMIN_PASSWORD"],
+    admin_email = os.environ.get("ADMIN_EMAIL", "dassantana135@gmail.com")
+    admin_pass = os.environ.get("ADMIN_PASSWORD", "Admin@StallWise2026")
+    owner = await ensure_seller(admin_email, admin_pass,
                                 "Marketo Owner", "demo-store", "Demo Store")
     await ensure_seller("seller2@marketo-demo.com", "Seller2@2026", "Artisan Seller",
                         "artisan-shop", "Artisan Shop")

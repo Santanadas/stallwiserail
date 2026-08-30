@@ -13,7 +13,7 @@ JWT_ALGORITHM = "HS256"
 
 
 def _jwt_secret() -> str:
-    return os.environ["JWT_SECRET"]
+    return os.environ.get("JWT_SECRET", "stallwise_default_super_secret_jwt_key_2026")
 
 
 # ---------- Password hashing ----------
@@ -94,7 +94,8 @@ def decode_token(token: str) -> dict:
 
 # ---------- AES-256-GCM secret encryption ----------
 def _enc_key() -> bytes:
-    return hashlib.sha256(os.environ["ENCRYPTION_KEY"].encode("utf-8")).digest()
+    key = os.environ.get("ENCRYPTION_KEY", "stallwise_default_aes_encryption_key_2026")
+    return hashlib.sha256(key.encode("utf-8")).digest()
 
 
 def encrypt_secret(plaintext: str) -> str:
