@@ -64,24 +64,22 @@ async def init_db() -> Optional[asyncpg.Pool]:
         return None
 
     # Determine SSL mode for remote cloud databases (Supabase, Railway, Neon, AWS)
-    ssl_context = None
+    ssl_mode = None
     if any(k in db_url.lower() for k in ("supabase", "pooler", "railway", "render", "neon", "sslmode=require", "aws")):
-        ssl_context = ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
+        ssl_mode = "require"
 
     # Clean URL of query parameters if asyncpg doesn't parse them natively
     clean_url = db_url.split("?")[0] if "?" in db_url else db_url
 
     try:
         # statement_cache_size=0 is required for Supabase Transaction Poolers (pgBouncer)
-        if ssl_context:
+        if ssl_mode:
             _pool = await asyncpg.create_pool(
                 clean_url,
                 init=_init_connection,
                 min_size=1,
                 max_size=10,
-                ssl=ssl_context,
+                ssl=ssl_mode,
                 statement_cache_size=0,
                 timeout=10.0,
             )
