@@ -71,6 +71,12 @@ async def init_db() -> Optional[asyncpg.Pool]:
         port = parsed.port or 5432
         dbname = (parsed.path or "/postgres").lstrip("/") or "postgres"
 
+        if password and ("[YOUR-PASSWORD]" in password or "[YOUR-SUPABASE-PASSWORD]" in password or "YOUR-PASSWORD" in password):
+            _last_db_error = "Please replace [YOUR-PASSWORD] in your Railway DATABASE_URL with your actual Supabase database password."
+            logger.warning(_last_db_error)
+            _pool = None
+            return None
+
         # Determine SSL mode for remote cloud databases (Supabase, Railway, Neon, AWS)
         ssl_mode = None
         if any(k in db_url.lower() for k in ("supabase", "pooler", "railway", "render", "neon", "sslmode=require", "aws", ".com", ".co", ".net")):
