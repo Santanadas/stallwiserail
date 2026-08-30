@@ -10,6 +10,7 @@ import { useDocumentMeta } from "@/lib/useDocumentMeta";
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(true);
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -40,7 +41,7 @@ export default function Login() {
         setOtpPending(true);
       } else {
         // Fallback if OTP is somehow not required
-        setVerifiedUser(result);
+        setVerifiedUser(result, rememberMe);
         navigate("/dashboard");
       }
     } catch (err) {
@@ -51,7 +52,7 @@ export default function Login() {
   };
 
   const handleOtpVerified = (user) => {
-    setVerifiedUser(user);
+    setVerifiedUser(user, rememberMe);
     if (user?.hasStore) {
       navigate("/dashboard", { replace: true });
     } else {
@@ -114,6 +115,17 @@ export default function Login() {
             {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>
         </div>
+        
+        <label className="flex items-center gap-2">
+          <input 
+            type="checkbox" 
+            checked={rememberMe} 
+            onChange={(e) => setRememberMe(e.target.checked)}
+            className="h-4 w-4 accent-[#FF4F00]" 
+          />
+          <span className="text-sm font-medium text-[#525252]">Remember me</span>
+        </label>
+
         {error && <AuthAlert data-testid="login-error">{error}</AuthAlert>}
         <AuthSubmit data-testid="login-submit" type="submit" disabled={busy}>
           {busy ? "Logging in…" : "Log in"}

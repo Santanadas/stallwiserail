@@ -58,11 +58,7 @@ export default function BuyerOrder() {
   const pay = async () => {
     setErr(""); setMsg(""); setBusy(true);
     try {
-      if (order.mockPayment) {
-        await api.post(`/orders/${orderId}/mock-pay`);
-        setMsg("Payment simulated (MOCK). Your order is confirmed.");
-        load();
-      } else if (order.razorpayOrderId) {
+      if (order.razorpayOrderId) {
         const options = {
           key: order.razorpayKeyId, amount: Math.round(order.amount * 100), currency: "INR",
           order_id: order.razorpayOrderId, name: "Stall Wise",
@@ -88,7 +84,7 @@ export default function BuyerOrder() {
   const copyOtp = () => { navigator.clipboard?.writeText(order.otp); setCopied(true); setTimeout(() => setCopied(false), 1500); };
 
   useEffect(() => {
-    if (order && !order.mockPayment && order.status === "placed" && !window.Razorpay) {
+    if (order && order.status === "placed" && !window.Razorpay) {
       const s = document.createElement("script");
       s.src = "https://checkout.razorpay.com/v1/checkout.js";
       document.body.appendChild(s);

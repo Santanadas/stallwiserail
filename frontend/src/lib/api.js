@@ -26,7 +26,7 @@ const processQueue = (error, token = null) => {
 // Request Interceptor: Attach persistent token from localStorage
 api.interceptors.request.use((config) => {
   try {
-    const token = localStorage.getItem("stallwise_token");
+    const token = localStorage.getItem("stallwise_token") || sessionStorage.getItem("stallwise_token");
     if (token && !config.headers.Authorization) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -37,10 +37,11 @@ api.interceptors.request.use((config) => {
 // Response Interceptor: Automatically refresh expired access tokens using the 90-day refresh token
 api.interceptors.response.use(
   (response) => {
-    // Auto-persist returned token in localStorage
+    // Auto-persist returned token in localStorage or sessionStorage
     if (response?.data?.token) {
       try {
-        localStorage.setItem("stallwise_token", response.data.token);
+        const storage = localStorage.getItem("stallwise_user") ? localStorage : sessionStorage;
+        storage.setItem("stallwise_token", response.data.token);
       } catch {}
     }
     return response;
@@ -71,7 +72,8 @@ api.interceptors.response.use(
         const { data: refData } = await api.post("/auth/refresh");
         if (refData?.token) {
           try {
-            localStorage.setItem("stallwise_token", refData.token);
+            const storage = localStorage.getItem("stallwise_user") ? localStorage : sessionStorage;
+            storage.setItem("stallwise_token", refData.token);
           } catch {}
         }
         processQueue(null);
@@ -79,6 +81,7 @@ api.interceptors.response.use(
       } catch (refreshErr) {
         try {
           localStorage.removeItem("stallwise_token");
+          sessionStorage.removeItem("stallwise_token");
         } catch {}
         processQueue(refreshErr, null);
         return Promise.reject(refreshErr);
