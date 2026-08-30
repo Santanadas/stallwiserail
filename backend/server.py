@@ -1200,19 +1200,21 @@ _PLAN_SPECS = {
     "yearly": {"period": "yearly", "interval": 1, "amount": PRO_YEARLY_AMOUNT},
 }
 
+# Razorpay platform keys (live)
+_RP_KEY_ID = os.environ.get("RAZORPAY_KEY_ID") or os.environ.get("RAZORPAY_PLATFORM_KEY_ID") or "rzp_live_TVs3r96Uvj8B1S"
+_RP_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET") or os.environ.get("RAZORPAY_PLATFORM_KEY_SECRET") or "xM9IugMkJB74bdDbH7UWh3Zi"
+
 
 def platform_rp_client():
-    kid = os.environ.get("RAZORPAY_KEY_ID") or os.environ.get("RAZORPAY_PLATFORM_KEY_ID")
-    ksec = os.environ.get("RAZORPAY_KEY_SECRET") or os.environ.get("RAZORPAY_PLATFORM_KEY_SECRET")
-    if not kid or not ksec:
+    if not _RP_KEY_ID or not _RP_KEY_SECRET:
         raise HTTPException(status_code=503, detail="Platform billing is not configured yet")
-    return razorpay.Client(auth=(kid, ksec)), kid
+    return razorpay.Client(auth=(_RP_KEY_ID, _RP_KEY_SECRET)), _RP_KEY_ID
 
 
 @api.get("/subscription")
 async def get_subscription(user=Depends(get_current_user)):
     status = await effective_sub_status(user)
-    kid = os.environ.get("RAZORPAY_KEY_ID") or os.environ.get("RAZORPAY_PLATFORM_KEY_ID")
+    kid = _RP_KEY_ID
     return {
         "subscriptionStatus": status,
         "premiumTier": PREMIUM_TIER,
@@ -1236,8 +1238,8 @@ async def create_subscription(body: SubCreateIn, user=Depends(get_current_user))
     plan = _PLAN_SPECS[interval]
     amount = plan["amount"]
     
-    kid = os.environ.get("RAZORPAY_KEY_ID") or os.environ.get("RAZORPAY_PLATFORM_KEY_ID")
-    ksec = os.environ.get("RAZORPAY_KEY_SECRET") or os.environ.get("RAZORPAY_PLATFORM_KEY_SECRET")
+    kid = _RP_KEY_ID
+    ksec = _RP_KEY_SECRET
     
     # If Razorpay keys are not yet configured in Railway, activate test subscription seamlessly
     if not kid or not ksec:
@@ -1264,7 +1266,7 @@ async def create_subscription(body: SubCreateIn, user=Depends(get_current_user))
 
     # Live Razorpay Order Creation
     try:
-        rp_client = razorpay.Client(auth=(kid, ksec))
+        rp_client = razorpay.Client(auth=(_RP_KEY_ID, _RP_KEY_SECRET))
         amount_paise = int(round(amount * 100))
         rp_order = await asyncio.to_thread(rp_client.order.create, {
             "amount": amount_paise,
@@ -1312,8 +1314,8 @@ async def create_subscription(body: SubCreateIn, user=Depends(get_current_user))
 
 @api.post("/subscription/verify-payment")
 async def verify_subscription_payment(body: PayVerifyIn, user=Depends(get_current_user)):
-    kid = os.environ.get("RAZORPAY_KEY_ID") or os.environ.get("RAZORPAY_PLATFORM_KEY_ID")
-    ksec = os.environ.get("RAZORPAY_KEY_SECRET") or os.environ.get("RAZORPAY_PLATFORM_KEY_SECRET")
+    kid = _RP_KEY_ID
+    ksec = _RP_KEY_SECRET
     if not kid or not ksec:
         raise HTTPException(status_code=503, detail="Platform billing credentials not configured")
     
@@ -1324,7 +1326,7 @@ async def verify_subscription_payment(body: PayVerifyIn, user=Depends(get_curren
         raise HTTPException(status_code=400, detail="Payment signature verification failed")
     
     # Fetch Razorpay order details to know interval
-    rp_client = razorpay.Client(auth=(kid, ksec))
+    rp_client = razorpay.Client(auth=(_RP_KEY_ID, _RP_KEY_SECRET))
     rp_order = await asyncio.to_thread(rp_client.order.fetch, body.razorpay_order_id)
     notes = rp_order.get("notes") or {}
     interval = notes.get("interval", "monthly")
