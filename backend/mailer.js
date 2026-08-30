@@ -12,9 +12,10 @@ async function getTransporter() {
   const service = process.env.SMTP_SERVICE;
   const secure = process.env.SMTP_SECURE === "true" || port === 465;
 
-  if (service && user && pass) {
+  // Auto-detect Gmail accounts for highest deliverability and zero connection timeouts
+  if ((service === "gmail" || (host && host.includes("gmail")) || (user && user.includes("@gmail.com"))) && user && pass) {
     return nodemailer.createTransport({
-      service,
+      service: "gmail",
       auth: { user, pass },
     });
   }
@@ -25,9 +26,9 @@ async function getTransporter() {
       port,
       secure,
       auth: { user, pass },
-      connectionTimeout: 8000,
-      greetingTimeout: 8000,
-      socketTimeout: 8000,
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 10000,
       tls: {
         rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED !== "false",
       },
