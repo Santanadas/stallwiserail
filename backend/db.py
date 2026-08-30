@@ -257,35 +257,43 @@ async def close_db():
         _pool = None
 
 
+async def get_pool() -> asyncpg.Pool:
+    global _pool
+    if _pool is None:
+        await init_db()
+    if _pool is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Database is connecting. Please check that DATABASE_URL is set with your Supabase connection string in Railway variables."
+        )
+    return _pool
+
+
 async def fetch_one(query: str, *args) -> Optional[Dict[str, Any]]:
     """Execute query and return single row as dict, or None."""
-    if not _pool:
-        raise HTTPException(status_code=503, detail="Database is connecting. Please check DATABASE_URL in Railway variables.")
-    async with _pool.acquire() as conn:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
         record = await conn.fetchrow(query, *args)
         return dict(record) if record else None
 
 
 async def fetch_all(query: str, *args) -> List[Dict[str, Any]]:
     """Execute query and return all matching rows as dicts."""
-    if not _pool:
-        raise HTTPException(status_code=503, detail="Database is connecting. Please check DATABASE_URL in Railway variables.")
-    async with _pool.acquire() as conn:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
         records = await conn.fetch(query, *args)
         return [dict(r) for r in records]
 
 
 async def fetch_val(query: str, *args) -> Any:
     """Execute query and return single scalar value."""
-    if not _pool:
-        raise HTTPException(status_code=503, detail="Database is connecting. Please check DATABASE_URL in Railway variables.")
-    async with _pool.acquire() as conn:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
         return await conn.fetchval(query, *args)
 
 
 async def execute(query: str, *args) -> str:
     """Execute query (INSERT, UPDATE, DELETE) and return status."""
-    if not _pool:
-        raise HTTPException(status_code=503, detail="Database is connecting. Please check DATABASE_URL in Railway variables.")
-    async with _pool.acquire() as conn:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
         return await conn.execute(query, *args)
