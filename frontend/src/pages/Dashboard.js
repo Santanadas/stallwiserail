@@ -1104,16 +1104,6 @@ function SubscriptionSection({ onChange }) {
       const { data } = await api.post("/subscription/create", { interval });
       console.log("[StallWise Sub] Server response:", JSON.stringify(data));
 
-      if (data.mode === "test_activated") {
-        console.log("[StallWise Sub] Test activation mode — activating directly");
-        setSuccessMsg(data.message || `Stall Wise Pro (${interval}) activated!`);
-        await load();
-        if (checkAuth) await checkAuth();
-        if (onChange) onChange();
-        setSubscribing(null);
-        return;
-      }
-
       console.log("[StallWise Sub] Live mode — loading Razorpay checkout.js...");
       const ok = await loadScript();
       console.log("[StallWise Sub] Razorpay script loaded:", ok, "window.Razorpay:", !!window.Razorpay);

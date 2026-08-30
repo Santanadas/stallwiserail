@@ -1009,7 +1009,7 @@ async def checkout(slug: str, body: OrderIn, request: Request):
     order_id = new_id("ord")
     created_at = iso(now())
 
-    # Razorpay Route Order Split Check
+    # Razorpay Real Live Order Creation
     route = await db.fetch_one("SELECT * FROM seller_routes WHERE seller_id = $1", store["seller_id"])
     seller = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", store["seller_id"])
     seller_sub = await effective_sub_status(seller) if seller else "inactive"
@@ -1017,30 +1017,60 @@ async def checkout(slug: str, body: OrderIn, request: Request):
     rc, plat_kid, _ = route_service.platform_client()
     rp_order_id = None
     rp_key_id = None
-    mock_payment = True
+    mock_payment = False
 
-    if route and route.get("mode") == "razorpay" and route.get("account_id") and rc:
+    amount_paise = int(round(total * 100))
+    seller_payout_paise = int(round(amount_paise * (1.0 - commission_pct)))
+
+    if rc and amount_paise > 0:
         try:
-            amount_paise = int(round(total * 100))
-            seller_payout_paise = int(round(amount_paise * (1.0 - commission_pct)))
-            rp = await asyncio.to_thread(rc.order.create, {
-                "amount": amount_paise, "currency": "INR", "payment_capture": 1,
+            order_payload = {
+                "amount": amount_paise,
+                "currency": "INR",
+                "payment_capture": 1,
                 "receipt": order_id[:40],
-                "transfers": [{
-                    "account": route["account_id"], "amount": seller_payout_paise, "currency": "INR",
-                    "on_hold": 0, "notes": {
+                "notes": {
+                    "platform": "Stall Wise",
+                    "storeSlug": store["slug"],
+                    "orderId": order_id,
+                }
+            }
+            if route and route.get("mode") == "razorpay" and route.get("account_id"):
+                order_payload["transfers"] = [{
+                    "account": route["account_id"],
+                    "amount": seller_payout_paise,
+                    "currency": "INR",
+                    "on_hold": 0,
+                    "notes": {
                         "platform": "Stall Wise",
                         "storeSlug": store["slug"],
                         "commission": f"{int(commission_pct * 100)}%",
                     },
-                }],
-            })
+                }]
+            rp = await asyncio.to_thread(rc.order.create, order_payload)
             rp_order_id = rp["id"]
             rp_key_id = plat_kid
             mock_payment = False
         except Exception as e:
-            logger.error(f"Razorpay Route order creation fallback: {e}")
-            mock_payment = True
+            logger.warning(f"Razorpay route order create with transfers failed: {e}; trying direct live capture")
+            try:
+                rp = await asyncio.to_thread(rc.order.create, {
+                    "amount": amount_paise,
+                    "currency": "INR",
+                    "payment_capture": 1,
+                    "receipt": order_id[:40],
+                    "notes": {
+                        "platform": "Stall Wise",
+                        "storeSlug": store["slug"],
+                        "orderId": order_id,
+                    }
+                })
+                rp_order_id = rp["id"]
+                rp_key_id = plat_kid
+                mock_payment = False
+            except Exception as e2:
+                logger.error(f"Direct live Razorpay order creation error: {e2}")
+                mock_payment = False
 
     await db.execute(
         """
@@ -1072,6 +1102,11 @@ async def checkout(slug: str, body: OrderIn, request: Request):
         "razorpayKeyId": rp_key_id,
         "needsMockPay": mock_payment,
     }
+
+
+@api.post("/orders")
+async def create_order_alias(body: OrderIn, request: Request):
+    return await checkout(body.storeSlug, body, request)
 
 
 @api.get("/orders")
@@ -1241,32 +1276,12 @@ async def create_subscription(body: SubCreateIn, user=Depends(get_current_user))
     kid = _RP_KEY_ID
     ksec = _RP_KEY_SECRET
     
-    # If Razorpay keys are not yet configured in Railway, activate test subscription seamlessly
     if not kid or not ksec:
-        days = 365 if interval == "yearly" else 30
-        expires_at = iso(now() + timedelta(days=days))
-        await db.execute(
-            """
-            UPDATE users
-            SET subscription_status = 'active',
-                subscription_id = $1,
-                subscription_interval = $2,
-                subscription_expires_at = $3
-            WHERE user_id = $4
-            """,
-            f"sub_test_{uuid.uuid4().hex[:8]}", interval, expires_at, user["user_id"]
-        )
-        return {
-            "mode": "test_activated",
-            "subscriptionStatus": "active",
-            "subscriptionInterval": interval,
-            "subscriptionExpiresAt": expires_at,
-            "message": f"Stall Wise Pro ({interval}) has been activated successfully!",
-        }
+        raise HTTPException(status_code=503, detail="Platform Razorpay credentials not configured")
 
-    # Live Razorpay Order Creation
+    # Live Real Money Razorpay Order Creation
     try:
-        rp_client = razorpay.Client(auth=(_RP_KEY_ID, _RP_KEY_SECRET))
+        rp_client = razorpay.Client(auth=(kid, ksec))
         amount_paise = int(round(amount * 100))
         rp_order = await asyncio.to_thread(rp_client.order.create, {
             "amount": amount_paise,
@@ -1288,28 +1303,8 @@ async def create_subscription(body: SubCreateIn, user=Depends(get_current_user))
             "tier": PREMIUM_TIER,
         }
     except Exception as e:
-        logger.error(f"Live Razorpay order creation failed: {e}", exc_info=True)
-        # Fall back gracefully so user is never blocked
-        days = 365 if interval == "yearly" else 30
-        expires_at = iso(now() + timedelta(days=days))
-        await db.execute(
-            """
-            UPDATE users
-            SET subscription_status = 'active',
-                subscription_id = $1,
-                subscription_interval = $2,
-                subscription_expires_at = $3
-            WHERE user_id = $4
-            """,
-            f"sub_auto_{uuid.uuid4().hex[:8]}", interval, expires_at, user["user_id"]
-        )
-        return {
-            "mode": "test_activated",
-            "subscriptionStatus": "active",
-            "subscriptionInterval": interval,
-            "subscriptionExpiresAt": expires_at,
-            "message": f"Stall Wise Pro ({interval}) is now active!",
-        }
+        logger.error(f"Live Razorpay subscription order creation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Razorpay error: {str(e)}")
 
 
 @api.post("/subscription/verify-payment")
