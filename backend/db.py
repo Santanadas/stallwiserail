@@ -16,6 +16,7 @@ from fastapi import HTTPException
 logger = logging.getLogger("stallwise.db")
 
 _pool: Optional[asyncpg.Pool] = None
+_last_db_error: Optional[str] = None
 
 
 def get_database_url() -> str:
@@ -26,7 +27,7 @@ def get_database_url() -> str:
         or os.environ.get("PGDATABASE_URL")
         or os.environ.get("POSTGRESQL_URL")
         or ""
-    )
+    ).strip()
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]
     return url
@@ -53,17 +54,18 @@ async def _init_connection(conn: asyncpg.Connection):
 
 async def init_db() -> Optional[asyncpg.Pool]:
     """Initialize asyncpg pool and automatically create all tables and indexes."""
-    global _pool
+    global _pool, _last_db_error
     db_url = get_database_url()
 
     if not db_url:
-        logger.warning("DATABASE_URL is not set in Railway service variables. Database queries will return 503 until DATABASE_URL is added.")
+        _last_db_error = "DATABASE_URL environment variable is missing or empty."
+        logger.warning(_last_db_error)
         _pool = None
         return None
 
-    # Determine SSL mode for remote databases (Supabase, Railway, Neon, AWS)
+    # Determine SSL mode for remote cloud databases (Supabase, Railway, Neon, AWS)
     ssl_context = None
-    if any(k in db_url.lower() for k in ("supabase", "pooler", "railway", "render", "neon", "sslmode=require")):
+    if any(k in db_url.lower() for k in ("supabase", "pooler", "railway", "render", "neon", "sslmode=require", "aws")):
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
@@ -72,6 +74,7 @@ async def init_db() -> Optional[asyncpg.Pool]:
     clean_url = db_url.split("?")[0] if "?" in db_url else db_url
 
     try:
+        # statement_cache_size=0 is required for Supabase Transaction Poolers (pgBouncer)
         if ssl_context:
             _pool = await asyncpg.create_pool(
                 clean_url,
@@ -79,6 +82,7 @@ async def init_db() -> Optional[asyncpg.Pool]:
                 min_size=1,
                 max_size=10,
                 ssl=ssl_context,
+                statement_cache_size=0,
                 timeout=10.0,
             )
         else:
@@ -87,9 +91,11 @@ async def init_db() -> Optional[asyncpg.Pool]:
                 init=_init_connection,
                 min_size=1,
                 max_size=10,
+                statement_cache_size=0,
                 timeout=10.0,
             )
         logger.info("Connected to PostgreSQL database pool successfully")
+        _last_db_error = None
 
         # Create tables and indexes safely
         async with _pool.acquire() as conn:
@@ -240,7 +246,8 @@ async def init_db() -> Optional[asyncpg.Pool]:
             """)
             logger.info("PostgreSQL database tables and indexes verified successfully")
     except Exception as e:
-        logger.warning(f"PostgreSQL connection warning: {e}. Check DATABASE_URL in Railway variables.")
+        _last_db_error = str(e)
+        logger.error(f"PostgreSQL connection error: {e}")
         _pool = None
         return None
 
@@ -258,13 +265,14 @@ async def close_db():
 
 
 async def get_pool() -> asyncpg.Pool:
-    global _pool
+    global _pool, _last_db_error
     if _pool is None:
         await init_db()
     if _pool is None:
+        err_msg = _last_db_error or "DATABASE_URL is not set or unreachable"
         raise HTTPException(
             status_code=503,
-            detail="Database is connecting. Please check that DATABASE_URL is set with your Supabase connection string in Railway variables."
+            detail=f"Database connection error: {err_msg}. Please verify your DATABASE_URL in Railway variables."
         )
     return _pool
 
