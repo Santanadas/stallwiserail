@@ -274,10 +274,8 @@ async def _create_auth_otp(user_id: str, email: str, name: str, purpose: str) ->
         "created_at": iso(now()),
         "expires_at": iso(now() + timedelta(minutes=AUTH_OTP_EXPIRY_MIN)),
     })
-    try:
-        await email_service.send_auth_otp_email(email, name, otp)
-    except Exception as e:
-        logger.error(f"auth OTP email failed: {e}")
+    # Send email in background so user doesn't wait on SMTP latency
+    asyncio.create_task(email_service.send_auth_otp_email(email, name, otp))
     logger.info(f"Auth OTP for {email} ({purpose}): {otp}")
     return {"otp_id": otp_id}
 

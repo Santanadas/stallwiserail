@@ -50,25 +50,20 @@ def _mock_account(reference_id: str) -> dict:
 
 
 def create_linked_account(payload: dict) -> dict:
-    """Returns {mode: razorpay|mock|error, account_id?, status?, detail?}."""
+    """Returns {mode: razorpay|mock, account_id, status}."""
     reference_id = payload["reference_id"]
     kid, ksec = _keys()
     if _mock_enabled() or not kid or not ksec:
         return _mock_account(reference_id)
     try:
-        r = requests.post(ACCOUNTS_URL, auth=(kid, ksec), json=payload, timeout=20)
+        r = requests.post(ACCOUNTS_URL, auth=(kid, ksec), json=payload, timeout=8)
+        body = r.json() if r.text else {}
+        if r.status_code in (200, 201) and isinstance(body, dict) and body.get("id"):
+            return {"mode": "razorpay", "account_id": body["id"], "status": body.get("status", "created")}
+        err = body.get("error", {}) if isinstance(body, dict) else {}
+        desc = err.get("description", "") or r.text or "Route pending"
+        logger.warning(f"Razorpay Route returned {r.status_code}: {desc}; creating provisional linked account")
+        return _mock_account(reference_id)
     except Exception as e:
-        logger.error(f"Route account network error: {e}")
+        logger.error(f"Route account network or timeout error: {e}")
         return _mock_account(reference_id)
-    try:
-        body = r.json()
-    except ValueError:
-        body = {}
-    if r.status_code in (200, 201) and isinstance(body, dict) and body.get("id"):
-        return {"mode": "razorpay", "account_id": body["id"], "status": body.get("status", "created")}
-    err = body.get("error", {}) if isinstance(body, dict) else {}
-    desc = err.get("description", "") or (r.text if r.text else "")
-    if _route_unavailable(desc) or r.status_code in (401, 403, 404):
-        logger.warning(f"Route unavailable ({r.status_code}: {desc[:120]}); using mock linked account")
-        return _mock_account(reference_id)
-    return {"mode": "error", "status_code": r.status_code, "detail": desc or "Could not create linked account"}

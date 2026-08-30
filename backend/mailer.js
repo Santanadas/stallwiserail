@@ -25,6 +25,9 @@ async function getTransporter() {
       port,
       secure,
       auth: { user, pass },
+      connectionTimeout: 8000,
+      greetingTimeout: 8000,
+      socketTimeout: 8000,
       tls: {
         rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED !== "false",
       },
@@ -36,6 +39,9 @@ async function getTransporter() {
       host,
       port,
       secure,
+      connectionTimeout: 8000,
+      greetingTimeout: 8000,
+      socketTimeout: 8000,
     });
   }
 
