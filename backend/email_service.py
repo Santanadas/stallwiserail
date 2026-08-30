@@ -8,11 +8,25 @@ from fastapi import HTTPException
 logger = logging.getLogger("stallwise.email")
 
 _DEF_K = "xkeysib-13d4697ccdcd795a4da1bce3ef64bf7047ea6b5006ec026ca3a70afd3e28691c" + "-0m6Zbo4dWJOjSnbc"
-BREVO_API_KEY = (
-    os.environ.get("BREVO_API_KEY")
-    or os.environ.get("SENDINBLUE_API_KEY")
-    or _DEF_K
-).strip()
+
+
+def _get_clean_brevo_key() -> str:
+    raw = (
+        os.environ.get("BREVO_API_KEY")
+        or os.environ.get("SENDINBLUE_API_KEY")
+        or ""
+    ).strip()
+    if not raw:
+        return _DEF_K
+    # If pasted with 'api xkeysib-...' or extra words
+    for part in raw.split():
+        if part.startswith("xkeysib-"):
+            return part.strip()
+    if raw.startswith("xkeysib-"):
+        return raw
+    # If an SMTP key was mistakenly passed (xsmtpsib-...), fall back to valid API key
+    return _DEF_K
+
 
 EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", "Stall Wise")
 EMAIL_FROM_ADDRESS = os.environ.get("EMAIL_FROM_ADDRESS", "dassantana135@gmail.com").strip()
@@ -20,6 +34,7 @@ EMAIL_FROM_ADDRESS = os.environ.get("EMAIL_FROM_ADDRESS", "dassantana135@gmail.c
 
 async def send_email(*, to: str, subject: str, html: str, recipient_name: str = "User") -> str | None:
     """Send transactional email via Brevo REST API with 100% deliverability."""
+    api_key = _get_clean_brevo_key()
     try:
         payload = {
             "sender": {"name": EMAIL_FROM_NAME, "email": EMAIL_FROM_ADDRESS},
@@ -31,7 +46,7 @@ async def send_email(*, to: str, subject: str, html: str, recipient_name: str = 
             r = await client.post(
                 "https://api.brevo.com/v3/smtp/email",
                 headers={
-                    "api-key": BREVO_API_KEY,
+                    "api-key": api_key,
                     "Content-Type": "application/json",
                     "Accept": "application/json",
                 },
