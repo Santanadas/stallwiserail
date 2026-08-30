@@ -1212,6 +1212,86 @@ async def get_subscription(user=Depends(get_current_user)):
     }
 
 
+@api.post("/subscription/create")
+async def create_subscription(body: SubCreateIn, user=Depends(get_current_user)):
+    interval = body.interval.lower().strip()
+    if interval not in _PLAN_SPECS:
+        raise HTTPException(status_code=400, detail="Invalid interval. Must be 'monthly' or 'yearly'")
+    
+    plan = _PLAN_SPECS[interval]
+    amount = plan["amount"]
+    
+    try:
+        rp_client, key_id = platform_rp_client()
+        amount_paise = int(round(amount * 100))
+        rp_order = await asyncio.to_thread(rp_client.order.create, {
+            "amount": amount_paise,
+            "currency": SUB_CURRENCY,
+            "payment_capture": 1,
+            "notes": {
+                "type": "platform_subscription",
+                "userId": user["user_id"],
+                "interval": interval,
+                "tier": PREMIUM_TIER,
+            },
+        })
+        return {
+            "mode": "order",
+            "orderId": rp_order["id"],
+            "amount": amount,
+            "currency": SUB_CURRENCY,
+            "keyId": key_id,
+            "tier": PREMIUM_TIER,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Subscription order creation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to initiate subscription: {str(e)}")
+
+
+@api.post("/subscription/verify-payment")
+async def verify_subscription_payment(body: PayVerifyIn, user=Depends(get_current_user)):
+    kid = os.environ.get("RAZORPAY_KEY_ID") or os.environ.get("RAZORPAY_PLATFORM_KEY_ID")
+    ksec = os.environ.get("RAZORPAY_KEY_SECRET") or os.environ.get("RAZORPAY_PLATFORM_KEY_SECRET")
+    if not kid or not ksec:
+        raise HTTPException(status_code=503, detail="Platform billing credentials not configured")
+    
+    # Verify HMAC signature
+    msg = f"{body.razorpay_order_id}|{body.razorpay_payment_id}".encode("utf-8")
+    expected_signature = hmac.new(ksec.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected_signature, body.razorpay_signature):
+        raise HTTPException(status_code=400, detail="Payment signature verification failed")
+    
+    # Fetch Razorpay order details to know interval
+    rp_client = razorpay.Client(auth=(kid, ksec))
+    rp_order = await asyncio.to_thread(rp_client.order.fetch, body.razorpay_order_id)
+    notes = rp_order.get("notes") or {}
+    interval = notes.get("interval", "monthly")
+    
+    days = 365 if interval == "yearly" else 30
+    expires_at = iso(now() + timedelta(days=days))
+    
+    await db.execute(
+        """
+        UPDATE users
+        SET subscription_status = 'active',
+            subscription_id = $1,
+            subscription_interval = $2,
+            subscription_expires_at = $3
+        WHERE user_id = $4
+        """,
+        body.razorpay_payment_id, interval, expires_at, user["user_id"]
+    )
+    
+    return {
+        "ok": True,
+        "subscriptionStatus": "active",
+        "subscriptionInterval": interval,
+        "subscriptionExpiresAt": expires_at,
+    }
+
+
 @api.post("/subscription/simulate")
 async def subscription_simulate(body: SubSimIn, user=Depends(get_current_user)):
     if body.status not in ("active", "inactive"):
