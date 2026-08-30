@@ -350,19 +350,22 @@ def get_client_ip(request: Request) -> str:
 
 
 # ======================= Auth OTP helper =======================
-async def _create_auth_otp(user_id: str, email: str, name: str, purpose: str) -> dict:
+async def _create_auth_otp(user_id: str, email: str, name: str, purpose: str, password_hash: Optional[str] = None) -> dict:
     otp = security.generate_otp()
     otp_id = new_id("otp")
     created_at = iso(now())
     expires_at = iso(now() + timedelta(minutes=AUTH_OTP_EXPIRY_MIN))
     otp_hash = security.hash_otp(otp)
 
+    # Clean up any existing pending OTPs for this email and purpose
+    await db.execute("DELETE FROM pending_otps WHERE email = $1 AND purpose = $2", email, purpose)
+
     await db.execute(
         """
-        INSERT INTO pending_otps (otp_id, user_id, email, otp_hash, purpose, attempts, locked, created_at, expires_at)
-        VALUES ($1, $2, $3, $4, $5, 0, FALSE, $6, $7)
+        INSERT INTO pending_otps (otp_id, user_id, email, name, password_hash, otp_hash, purpose, attempts, locked, created_at, expires_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 0, FALSE, $8, $9)
         """,
-        otp_id, user_id, email, otp_hash, purpose, created_at, expires_at
+        otp_id, user_id, email, name, password_hash, otp_hash, purpose, created_at, expires_at
     )
     # Send email in background asynchronously
     asyncio.create_task(email_service.send_auth_otp_email(email, name, otp))
@@ -381,19 +384,13 @@ async def register(body: RegisterIn, request: Request, response: Response):
         existing = await db.fetch_one("SELECT user_id FROM users WHERE email = $1", email)
         if existing:
             raise HTTPException(status_code=400, detail="This email is already registered. Please go to Login.")
+        
         user_id = new_id("user")
         clean_name = security.sanitize_text(body.name, 100)
         password_hash = security.hash_password(body.password)
-        created_at = iso(now())
 
-        await db.execute(
-            """
-            INSERT INTO users (user_id, email, name, password_hash, role, auth_provider, subscription_status, created_at)
-            VALUES ($1, $2, $3, $4, 'seller', 'password', 'inactive', $5)
-            """,
-            user_id, email, clean_name, password_hash, created_at
-        )
-        otp_info = await _create_auth_otp(user_id, email, clean_name, "register")
+        # Do NOT insert into users table until OTP is verified
+        otp_info = await _create_auth_otp(user_id, email, clean_name, "register", password_hash=password_hash)
         return {"pendingOtp": True, "email": email, "otpId": otp_info["otp_id"]}
     except HTTPException:
         raise
@@ -460,9 +457,27 @@ async def verify_auth_otp(body: VerifyOtpIn, request: Request, response: Respons
             raise HTTPException(status_code=423, detail="Too many failed attempts. Please request a new code.")
         raise HTTPException(status_code=400, detail=f"Invalid code ({attempts}/{AUTH_OTP_MAX_ATTEMPTS} attempts)")
     
-    user = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", rec["user_id"])
+    # OTP verified!
+    purpose = rec.get("purpose", "login")
+    if purpose == "register":
+        existing = await db.fetch_one("SELECT * FROM users WHERE email = $1", rec["email"])
+        if not existing:
+            await db.execute(
+                """
+                INSERT INTO users (user_id, email, name, password_hash, role, auth_provider, subscription_status, created_at)
+                VALUES ($1, $2, $3, $4, 'seller', 'password', 'inactive', $5)
+                """,
+                rec["user_id"], rec["email"], rec.get("name") or "", rec.get("password_hash") or "", iso(now())
+            )
+            user = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", rec["user_id"])
+        else:
+            user = existing
+    else:
+        user = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", rec["user_id"])
+
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
     await db.execute("DELETE FROM pending_otps WHERE otp_id = $1", body.otp_id)
     set_jwt_cookies(response, user["user_id"], user["email"])
     return public_user(user)
@@ -476,9 +491,6 @@ async def resend_auth_otp(body: ResendOtpIn, request: Request):
     rec = await db.fetch_one("SELECT * FROM pending_otps WHERE otp_id = $1", body.otp_id)
     if not rec:
         raise HTTPException(status_code=400, detail="Invalid verification session")
-    user = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", rec["user_id"])
-    if not user:
-        raise HTTPException(status_code=400, detail="Invalid verification session")
     otp = security.generate_otp()
     await db.execute(
         """
@@ -490,7 +502,8 @@ async def resend_auth_otp(body: ResendOtpIn, request: Request):
         iso(now() + timedelta(minutes=AUTH_OTP_EXPIRY_MIN)),
         body.otp_id
     )
-    asyncio.create_task(email_service.send_auth_otp_email(user["email"], user.get("name", ""), otp))
+    user_name = rec.get("name") or ""
+    asyncio.create_task(email_service.send_auth_otp_email(rec["email"], user_name, otp))
     return {"ok": True, "message": "New verification code sent"}
 
 

@@ -135,6 +135,8 @@ async def init_db() -> Optional[asyncpg.Pool]:
                 otp_id TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL,
                 email TEXT NOT NULL,
+                name TEXT,
+                password_hash TEXT,
                 otp_hash TEXT NOT NULL,
                 purpose TEXT NOT NULL,
                 attempts INT DEFAULT 0,
@@ -142,6 +144,8 @@ async def init_db() -> Optional[asyncpg.Pool]:
                 created_at TEXT NOT NULL,
                 expires_at TEXT NOT NULL
             );
+            ALTER TABLE pending_otps ADD COLUMN IF NOT EXISTS name TEXT;
+            ALTER TABLE pending_otps ADD COLUMN IF NOT EXISTS password_hash TEXT;
             CREATE INDEX IF NOT EXISTS idx_pending_otps_user ON pending_otps(user_id);
             CREATE INDEX IF NOT EXISTS idx_pending_otps_email ON pending_otps(email);
 
