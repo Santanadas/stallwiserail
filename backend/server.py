@@ -1278,9 +1278,14 @@ if os.path.isdir(DIST_DIR):
             return FileResponse(index_file)
         raise HTTPException(status_code=404, detail="Not found")
 
+cors_origins = [FRONTEND_URL, "http://localhost:3000"]
+if os.environ.get("EXTRA_CORS_ORIGINS"):
+    cors_origins.extend([o.strip() for o in os.environ["EXTRA_CORS_ORIGINS"].split(",") if o.strip()])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_URL, "http://localhost:3000", "*"],
+    allow_origins=cors_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.railway\.app|http://localhost:\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
