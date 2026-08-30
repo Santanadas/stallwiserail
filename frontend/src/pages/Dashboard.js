@@ -1098,10 +1098,14 @@ function SubscriptionSection({ onChange }) {
     setErrorMsg("");
     setSuccessMsg("");
     setSubscribing(interval);
+    console.log("[StallWise Sub] Starting subscription flow for:", interval);
     try {
+      console.log("[StallWise Sub] Calling /subscription/create...");
       const { data } = await api.post("/subscription/create", { interval });
+      console.log("[StallWise Sub] Server response:", JSON.stringify(data));
 
       if (data.mode === "test_activated") {
+        console.log("[StallWise Sub] Test activation mode — activating directly");
         setSuccessMsg(data.message || `Stall Wise Pro (${interval}) activated!`);
         await load();
         if (checkAuth) await checkAuth();
@@ -1110,9 +1114,11 @@ function SubscriptionSection({ onChange }) {
         return;
       }
 
+      console.log("[StallWise Sub] Live mode — loading Razorpay checkout.js...");
       const ok = await loadScript();
+      console.log("[StallWise Sub] Razorpay script loaded:", ok, "window.Razorpay:", !!window.Razorpay);
       if (!ok || !window.Razorpay) {
-        setErrorMsg("Could not load payment checkout script. Please verify your connection.");
+        setErrorMsg("Could not load payment checkout script. Please check your internet connection and try again.");
         setSubscribing(null);
         return;
       }
@@ -1128,10 +1134,12 @@ function SubscriptionSection({ onChange }) {
         theme: { color: "#FF4F00" },
         modal: {
           ondismiss: () => {
+            console.log("[StallWise Sub] User dismissed Razorpay modal");
             setSubscribing(null);
           },
         },
         handler: async (res) => {
+          console.log("[StallWise Sub] Payment success, verifying...", res);
           try {
             await api.post("/subscription/verify-payment", {
               razorpay_order_id: res.razorpay_order_id,
@@ -1143,6 +1151,7 @@ function SubscriptionSection({ onChange }) {
             if (checkAuth) await checkAuth();
             if (onChange) onChange();
           } catch (e) {
+            console.error("[StallWise Sub] Verify error:", e);
             setErrorMsg(formatApiError(e.response?.data?.detail) || "Payment verification failed.");
           } finally {
             setSubscribing(null);
@@ -1150,13 +1159,16 @@ function SubscriptionSection({ onChange }) {
         },
       };
 
+      console.log("[StallWise Sub] Opening Razorpay checkout with key:", data.keyId, "order:", data.orderId);
       const rzp = new window.Razorpay(options);
       rzp.on("payment.failed", function (response) {
+        console.error("[StallWise Sub] Payment failed:", response.error);
         setErrorMsg(response.error?.description || "Payment failed. Please try again.");
         setSubscribing(null);
       });
       rzp.open();
     } catch (e) {
+      console.error("[StallWise Sub] Subscribe error:", e, e.response?.data);
       setErrorMsg(formatApiError(e.response?.data?.detail) || "Failed to start checkout. Please try again.");
       setSubscribing(null);
     }
