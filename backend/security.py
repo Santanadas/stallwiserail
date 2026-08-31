@@ -2,6 +2,7 @@ import os
 import re
 import base64
 import hashlib
+import logging
 import secrets
 from typing import Optional
 import bcrypt
@@ -9,11 +10,31 @@ import jwt
 from datetime import datetime, timezone, timedelta
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+logger = logging.getLogger("stallwise.security")
+
 JWT_ALGORITHM = "HS256"
+
+# JWT signing secret. If JWT_SECRET is unset we fall back to a random
+# per-process value: the app still runs, but every session is invalidated on
+# restart. Set JWT_SECRET in the environment for production.
+_JWT_SECRET = os.environ.get("JWT_SECRET", "").strip()
+if not _JWT_SECRET:
+    _JWT_SECRET = secrets.token_hex(32)
+    logger.warning("JWT_SECRET is not set — using an ephemeral secret; sessions will not survive a restart.")
+
+# AES-256-GCM key for secrets at rest (seller gateway secrets, bank account
+# numbers, delivery OTPs). This MUST be stable — a changing key makes existing
+# ciphertext unreadable — so we refuse to start without it.
+_ENCRYPTION_KEY = os.environ.get("ENCRYPTION_KEY", "").strip()
+if not _ENCRYPTION_KEY:
+    raise RuntimeError(
+        "ENCRYPTION_KEY environment variable is required (used to encrypt bank "
+        "details and gateway secrets at rest)."
+    )
 
 
 def _jwt_secret() -> str:
-    return os.environ.get("JWT_SECRET", "stallwise_default_super_secret_jwt_key_2026")
+    return _JWT_SECRET
 
 
 # ---------- Password hashing ----------
@@ -97,8 +118,7 @@ def decode_token(token: str) -> dict:
 
 # ---------- AES-256-GCM secret encryption ----------
 def _enc_key() -> bytes:
-    key = os.environ.get("ENCRYPTION_KEY", "stallwise_default_aes_encryption_key_2026")
-    return hashlib.sha256(key.encode("utf-8")).digest()
+    return hashlib.sha256(_ENCRYPTION_KEY.encode("utf-8")).digest()
 
 
 def encrypt_secret(plaintext: str) -> str:

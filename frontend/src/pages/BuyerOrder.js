@@ -47,10 +47,10 @@ export default function BuyerOrder() {
 
   const load = useCallback(async () => {
     try {
-      const { data } = await api.get(`/order/${orderId}`);
+      const { data } = await api.get(`/order/${orderId}`, { params: { email } });
       setOrder(data);
     } catch (e) { setErr(formatApiError(e.response?.data?.detail)); }
-  }, [orderId]);
+  }, [orderId, email]);
   useEffect(() => { load(); }, [load]);
 
   const countdown = useCountdown(order?.status === "delivered" ? order?.windowExpiresAt : null);

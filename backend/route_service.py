@@ -29,8 +29,8 @@ class RouteError(Exception):
 
 
 def _keys():
-    kid = os.environ.get("RAZORPAY_KEY_ID") or "rzp_live_TVs3r96Uvj8B1S"
-    ksec = os.environ.get("RAZORPAY_KEY_SECRET") or "xM9IugMkJB74bdDbH7UWh3Zi"
+    kid = (os.environ.get("RAZORPAY_KEY_ID") or "").strip()
+    ksec = (os.environ.get("RAZORPAY_KEY_SECRET") or "").strip()
     return kid, ksec
 
 

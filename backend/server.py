@@ -379,6 +379,7 @@ async def _create_auth_otp(user_id: str, email: str, name: str, purpose: str, pa
     created_at = iso(now())
     expires_at = iso(now() + timedelta(minutes=AUTH_OTP_EXPIRY_MIN))
     otp_hash = security.hash_otp(otp)
+    _dev_echo = (os.environ.get("DEV_OTP_ECHO") or "").lower() == "true"
 
     # Clean up any existing pending OTPs for this email and purpose
     await db.execute("DELETE FROM pending_otps WHERE email = $1 AND purpose = $2", email, purpose)
@@ -390,10 +391,12 @@ async def _create_auth_otp(user_id: str, email: str, name: str, purpose: str, pa
         """,
         otp_id, user_id, email, name, password_hash, otp_hash, purpose, created_at, expires_at
     )
-    # Send email directly and ensure delivery
     await email_service.send_auth_otp_email(email, name, otp)
-    logger.info(f"Auth OTP for {email} ({purpose}): {otp}")
-    return {"otp_id": otp_id}
+    out = {"otp_id": otp_id}
+    if _dev_echo:
+        logger.warning("DEV_OTP_ECHO is on — OTPs are returned in API responses. Never enable this in production.")
+        out["dev_otp"] = otp
+    return out
 
 
 # ======================= Auth routes =======================
@@ -414,7 +417,7 @@ async def register(body: RegisterIn, request: Request, response: Response):
 
         # Do NOT insert into users table until OTP is verified
         otp_info = await _create_auth_otp(user_id, email, clean_name, "register", password_hash=password_hash)
-        return {"pendingOtp": True, "email": email, "otpId": otp_info["otp_id"]}
+        return {"pendingOtp": True, "email": email, "otpId": otp_info["otp_id"], "devOtp": otp_info.get("dev_otp")}
     except HTTPException:
         raise
     except Exception as e:
@@ -448,7 +451,7 @@ async def login(body: LoginIn, request: Request, response: Response):
         
         await db.execute("DELETE FROM login_attempts WHERE identifier = $1", ident)
         otp_info = await _create_auth_otp(user["user_id"], email, user.get("name", ""), "login")
-        return {"pendingOtp": True, "email": email, "otpId": otp_info["otp_id"]}
+        return {"pendingOtp": True, "email": email, "otpId": otp_info["otp_id"], "devOtp": otp_info.get("dev_otp")}
     except HTTPException:
         raise
     except Exception as e:
@@ -790,7 +793,15 @@ async def delete_avatar(user=Depends(get_current_user)):
 async def serve_file(path: str):
     try:
         data, content_type = await asyncio.to_thread(storage.get_object, path)
-        return Response(content=data, media_type=content_type, headers={"Cache-Control": "public, max-age=86400"})
+        return Response(
+            content=data,
+            media_type=content_type,
+            headers={
+                "Cache-Control": "public, max-age=86400",
+                "X-Content-Type-Options": "nosniff",
+                "Content-Disposition": "inline",
+            },
+        )
     except Exception:
         raise HTTPException(status_code=404, detail="File not found")
 
@@ -1068,6 +1079,13 @@ async def checkout(slug: str, body: OrderIn, request: Request):
                       "optionSelections": it.optionSelections, "quantity": it.quantity,
                       "unitPrice": unit})
 
+    # Stock check (product-level).
+    for pid, d in demand.items():
+        prod = prod_cache[pid]
+        stock = prod.get("stock")
+        if stock is not None and d["product_qty"] > stock:
+            raise HTTPException(status_code=409, detail=f"Only {stock} left of “{prod['title']}”.")
+
     order_id = new_id("ord")
     created_at = iso(now())
 
@@ -1138,6 +1156,14 @@ async def checkout(slug: str, body: OrderIn, request: Request):
         body.address, items, total, 0, 0, total, rp_order_id, rp_key_id, created_at
     )
 
+    # Reserve stock (guarded so it can never go negative under a race).
+    for pid, d in demand.items():
+        if prod_cache[pid].get("stock") is not None:
+            await db.execute(
+                "UPDATE products SET stock = stock - $1 WHERE product_id = $2 AND stock >= $3",
+                d["product_qty"], pid, d["product_qty"]
+            )
+
     seller = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", store["seller_id"])
     if seller:
         order_doc = {
@@ -1188,9 +1214,10 @@ async def seller_order_detail(order_id: str, user=Depends(get_current_user)):
 
 
 @api.get("/order/{order_id}")
-async def buyer_order_detail(order_id: str):
+async def buyer_order_detail(order_id: str, email: str = Query("")):
     o = await db.fetch_one("SELECT * FROM orders WHERE order_id = $1", order_id)
-    if not o:
+    # Require the buyer's email — the response carries PII and the delivery OTP.
+    if not o or (o.get("buyer_email") or "").lower() != email.lower().strip():
         raise HTTPException(status_code=404, detail="Order not found")
     o = await finalize_if_expired(o)
     return public_order(o, for_buyer=True)
@@ -1358,9 +1385,9 @@ _PLAN_SPECS = {
     "yearly": {"period": "yearly", "interval": 1, "amount": PRO_YEARLY_AMOUNT},
 }
 
-# Razorpay platform keys (live)
-_RP_KEY_ID = "rzp_live_TVs3r96Uvj8B1S"
-_RP_KEY_SECRET = "xM9IugMkJB74bdDbH7UWh3Zi"
+# Razorpay platform keys — from the environment only.
+_RP_KEY_ID = (os.environ.get("RAZORPAY_KEY_ID") or "").strip()
+_RP_KEY_SECRET = (os.environ.get("RAZORPAY_KEY_SECRET") or "").strip()
 
 
 def platform_rp_client():
@@ -1494,29 +1521,41 @@ if os.path.isdir(DIST_DIR):
     if os.path.isdir(assets_dir):
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
+    _DIST_REAL = os.path.realpath(DIST_DIR)
+
     @app.api_route("/{full_path:path}", methods=["GET", "HEAD"])
     async def serve_spa(full_path: str):
         if full_path.startswith("api") or full_path.startswith("uploads"):
             raise HTTPException(status_code=404, detail="Not found")
-        file_path = os.path.join(DIST_DIR, full_path)
-        if full_path and os.path.isfile(file_path):
-            return FileResponse(file_path)
-        index_file = os.path.join(DIST_DIR, "index.html")
+        index_file = os.path.join(_DIST_REAL, "index.html")
+        rel = (full_path or "").lstrip("/\\")
+        candidate = os.path.realpath(os.path.join(_DIST_REAL, rel))
+        if (
+            rel
+            and (candidate == _DIST_REAL or candidate.startswith(_DIST_REAL + os.sep))
+            and os.path.isfile(candidate)
+        ):
+            return FileResponse(candidate)
         if os.path.isfile(index_file):
             return FileResponse(index_file)
         raise HTTPException(status_code=404, detail="Not found")
 
-cors_origins = [FRONTEND_URL, "http://localhost:3000"]
-if os.environ.get("EXTRA_CORS_ORIGINS"):
-    cors_origins.extend([o.strip() for o in os.environ["EXTRA_CORS_ORIGINS"].split(",") if o.strip()])
+# Explicit, credentialed CORS allowlist. Add deploy/preview origins via
+# EXTRA_CORS_ORIGINS (comma-separated) rather than matching whole providers —
+# `*.vercel.app` with credentials would let any Vercel site call this API.
+cors_origins = {FRONTEND_URL, "http://localhost:3000", "http://127.0.0.1:3000"}
+for o in (os.environ.get("EXTRA_CORS_ORIGINS") or "").split(","):
+    o = o.strip().rstrip("/")
+    if o:
+        cors_origins.add(o)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins,
-    allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.railway\.app|http://localhost:\d+",
+    allow_origins=sorted(cors_origins),
+    allow_origin_regex=r"http://localhost:\d+|http://127\.0\.0\.1:\d+",
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 

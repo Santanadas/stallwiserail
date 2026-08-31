@@ -371,7 +371,8 @@ async def fetch_one(query: str, *args) -> Optional[Dict[str, Any]]:
         row = cur.fetchone()
         return _row_to_dict(row)
 
-    return await asyncio.to_thread(_run)
+    async with _sqlite_lock:
+        return await asyncio.to_thread(_run)
 
 
 async def fetch_all(query: str, *args) -> List[Dict[str, Any]]:
@@ -394,7 +395,8 @@ async def fetch_all(query: str, *args) -> List[Dict[str, Any]]:
         rows = cur.fetchall()
         return [_row_to_dict(r) for r in rows]
 
-    return await asyncio.to_thread(_run)
+    async with _sqlite_lock:
+        return await asyncio.to_thread(_run)
 
 
 async def fetch_val(query: str, *args) -> Any:
@@ -416,7 +418,8 @@ async def fetch_val(query: str, *args) -> Any:
         row = cur.fetchone()
         return row[0] if row else None
 
-    return await asyncio.to_thread(_run)
+    async with _sqlite_lock:
+        return await asyncio.to_thread(_run)
 
 
 async def execute(query: str, *args) -> str:
@@ -438,7 +441,8 @@ async def execute(query: str, *args) -> str:
             cur.execute(q, a)
         return "SUCCESS"
 
-    return await asyncio.to_thread(_run)
+    async with _sqlite_lock:
+        return await asyncio.to_thread(_run)
 
 
 async def close_db():

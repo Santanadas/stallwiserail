@@ -21,9 +21,21 @@ def init_storage(force: bool = False) -> str:
     return UPLOAD_DIR
 
 
+def _resolve(path: str) -> str:
+    """Resolve ``path`` to an absolute location that is guaranteed to sit inside
+    UPLOAD_DIR. Raises ValueError on any traversal attempt."""
+    base = os.path.realpath(UPLOAD_DIR)
+    # Reject absolute paths and anything with a parent-dir segment outright.
+    p = (path or "").lstrip("/\\")
+    full = os.path.realpath(os.path.join(base, p))
+    if full != base and not full.startswith(base + os.sep):
+        raise ValueError("Path escapes storage root")
+    return full
+
+
 def put_object(path: str, data: bytes, content_type: str) -> dict:
     """Write file to local filesystem."""
-    full_path = os.path.join(UPLOAD_DIR, path)
+    full_path = _resolve(path)
     os.makedirs(os.path.dirname(full_path), exist_ok=True)
     with open(full_path, "wb") as f:
         f.write(data)
@@ -32,7 +44,7 @@ def put_object(path: str, data: bytes, content_type: str) -> dict:
 
 def get_object(path: str):
     """Read file from local filesystem."""
-    full_path = os.path.join(UPLOAD_DIR, path)
+    full_path = _resolve(path)
     if not os.path.isfile(full_path):
         raise FileNotFoundError(f"File not found: {path}")
     ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
