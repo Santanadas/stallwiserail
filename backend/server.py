@@ -78,6 +78,27 @@ def new_id(prefix):
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
 
+def slugify(text: str, fallback: str = "item") -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
+    s = re.sub(r"-{2,}", "-", s)[:60].strip("-")
+    return s or fallback
+
+
+async def unique_product_slug(store_slug: str, title: str, exclude_id: Optional[str] = None) -> str:
+    """A per-store slug for the product's own URL: /{store}/{product}."""
+    base = slugify(title, "product")
+    candidate = base
+    for n in range(2, 60):
+        row = await db.fetch_one(
+            "SELECT product_id FROM products WHERE store_slug = $1 AND slug = $2",
+            store_slug, candidate,
+        )
+        if not row or (exclude_id and row["product_id"] == exclude_id):
+            return candidate
+        candidate = f"{base}-{n}"
+    return f"{base}-{uuid.uuid4().hex[:6]}"
+
+
 # ======================= Models =======================
 class RegisterIn(BaseModel):
     email: EmailStr
@@ -288,6 +309,7 @@ def public_product(p: Optional[dict]) -> Optional[dict]:
         "image": (imgs[0] if imgs else p.get("image")),
         "images": imgs or [],
         "paymentMethods": pays,
+        "slug": p.get("slug"),
         "created_at": p["created_at"],
     }
 
@@ -772,6 +794,69 @@ async def public_shop(slug: str):
     }
 
 
+@api.get("/shop/{slug}/product/{product_slug}")
+async def public_product_detail(slug: str, product_slug: str):
+    """Backs the crawlable /{store}/{product} page."""
+    s = slug.lower().strip()
+    store = await db.fetch_one("SELECT * FROM stores WHERE slug = $1", s)
+    if not store:
+        raise HTTPException(status_code=404, detail="Shop not found")
+    row = await db.fetch_one(
+        "SELECT * FROM products WHERE store_slug = $1 AND slug = $2 AND active = TRUE",
+        s, product_slug.lower().strip(),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Product not found")
+    seller = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", store["seller_id"])
+    related = await db.fetch_all(
+        "SELECT * FROM products WHERE store_slug = $1 AND active = TRUE AND product_id != $2 ORDER BY created_at DESC LIMIT 4",
+        s, row["product_id"],
+    )
+    sub_status = await effective_sub_status(seller) if seller else "inactive"
+    return {
+        "store": {"name": store["name"], "slug": store["slug"], "bio": store.get("bio", "")},
+        "seller": {
+            "name": seller.get("name") if seller else None,
+            "avatar": seller.get("avatar") if seller else None,
+        },
+        "product": public_product(row),
+        "related": [public_product(r) for r in related],
+        "showAds": sub_status != "active",
+    }
+
+
+@api.get("/shops")
+async def public_shop_directory(page: int = Query(1, ge=1), limit: int = Query(24, ge=1, le=60)):
+    """Public directory of live shops — real, growing, crawlable content."""
+    skip = (page - 1) * limit
+    total = await db.fetch_val(
+        "SELECT COUNT(*) FROM stores WHERE store_id IN (SELECT DISTINCT store_id FROM stores)"
+    )
+    rows = await db.fetch_all(
+        """
+        SELECT s.slug, s.name, s.bio, s.created_at, u.avatar,
+               (SELECT COUNT(*) FROM products p WHERE p.store_slug = s.slug AND p.active = TRUE) AS product_count
+        FROM stores s LEFT JOIN users u ON u.user_id = s.seller_id
+        ORDER BY s.created_at DESC LIMIT $1 OFFSET $2
+        """,
+        limit, skip,
+    )
+    shops = [
+        {
+            "slug": r["slug"],
+            "name": r["name"],
+            "bio": r.get("bio") or "",
+            "avatar": r.get("avatar"),
+            "productCount": r.get("product_count") or 0,
+            "created_at": r.get("created_at"),
+        }
+        for r in rows
+        if (r.get("product_count") or 0) > 0  # don't index empty shops
+    ]
+    return {"shops": shops, "total": total or 0, "page": page, "limit": limit,
+            "pages": max(1, ((total or 0) + limit - 1) // limit)}
+
+
 # ======================= Uploads / files =======================
 ALLOWED_IMG_EXT = {"jpg", "jpeg", "png", "gif", "webp"}
 
@@ -991,21 +1076,22 @@ async def create_product(body: ProductIn, user=Depends(get_current_user)):
     desc = security.sanitize_text(body.description, 2000)
     created_at = iso(now())
     option_groups_json = [og.model_dump() for og in body.optionGroups]
+    prod_slug = await unique_product_slug(store["slug"], title)
 
     await db.execute(
         """
-        INSERT INTO products (product_id, seller_id, store_slug, title, description, price, stock, option_groups, active, image, images, payment_methods, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        INSERT INTO products (product_id, seller_id, store_slug, title, description, price, stock, option_groups, active, image, images, payment_methods, slug, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         """,
         prod_id, user["user_id"], store["slug"], title, desc, body.price, body.stock,
-        option_groups_json, body.active, primary, images, pay_methods, created_at
+        option_groups_json, body.active, primary, images, pay_methods, prod_slug, created_at
     )
     return {
         "product_id": prod_id, "sellerId": user["user_id"], "storeSlug": store["slug"],
         "title": title, "description": desc, "price": body.price, "stock": body.stock,
         "optionGroups": option_groups_json, "active": body.active,
         "image": primary, "images": images, "paymentMethods": pay_methods,
-        "created_at": created_at,
+        "slug": prod_slug, "created_at": created_at,
     }
 
 
@@ -1028,13 +1114,20 @@ async def update_product(product_id: str, body: ProductIn, user=Depends(get_curr
     desc = security.sanitize_text(body.description, 2000)
     option_groups_json = [og.model_dump() for og in body.optionGroups]
 
+    # Keep the existing slug unless the title changed — renaming a live product
+    # shouldn't silently break the URL buyers already have.
+    prod_slug = prod.get("slug")
+    if not prod_slug or title != (prod.get("title") or ""):
+        prod_slug = await unique_product_slug(prod["store_slug"], title, exclude_id=product_id)
+
     await db.execute(
         """
         UPDATE products
-        SET title = $1, description = $2, price = $3, stock = $4, option_groups = $5, active = $6, image = $7, images = $8, payment_methods = $9
-        WHERE product_id = $10 AND seller_id = $11
+        SET title = $1, description = $2, price = $3, stock = $4, option_groups = $5, active = $6, image = $7, images = $8, payment_methods = $9, slug = $10
+        WHERE product_id = $11 AND seller_id = $12
         """,
-        title, desc, body.price, body.stock, option_groups_json, body.active, primary, images, pay_methods, product_id, user["user_id"]
+        title, desc, body.price, body.stock, option_groups_json, body.active, primary, images,
+        pay_methods, prod_slug, product_id, user["user_id"]
     )
     updated = await db.fetch_one("SELECT * FROM products WHERE product_id = $1", product_id)
     return public_product(updated)
@@ -1609,18 +1702,35 @@ if os.path.isdir(DIST_DIR):
         return _index_cache["html"]
 
     async def _seo_meta_for(route: str) -> dict:
-        """Resolve the SEO tags for a route. A single-segment path that matches
-        a store slug renders that shop's own title, description and offers."""
+        """Resolve the SEO tags for a route: /{store} renders that shop, and
+        /{store}/{product} renders the product with its own Product schema."""
         r = (route or "").strip("/")
-        if r and "/" not in r and r not in seo.STATIC_PAGES and not seo.is_noindex(r):
-            store = await db.fetch_one("SELECT * FROM stores WHERE slug = $1", r.lower())
+        if not r or seo.is_noindex(r):
+            return seo.static_meta(r)
+
+        parts = r.split("/")
+        if len(parts) <= 2 and parts[0] not in seo.STATIC_PAGES:
+            store = await db.fetch_one("SELECT * FROM stores WHERE slug = $1", parts[0].lower())
             if store:
-                seller = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", store["seller_id"])
+                seller = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", store["seller_id"]) or {}
+                if len(parts) == 2:
+                    prod = await db.fetch_one(
+                        "SELECT * FROM products WHERE store_slug = $1 AND slug = $2 AND active = TRUE",
+                        store["slug"], parts[1].lower(),
+                    )
+                    if prod:
+                        return seo.product_meta(store, seller, public_product(prod))
+                    return {**seo.static_meta(""), "canonical": f"{seo.SITE_URL}/{store['slug']}", "noindex": True}
                 rows = await db.fetch_all(
                     "SELECT * FROM products WHERE store_slug = $1 AND active = TRUE ORDER BY created_at DESC LIMIT 50",
                     store["slug"],
                 )
-                return seo.store_meta(store, seller or {}, [public_product(p) for p in rows])
+                return seo.store_meta(store, seller, [public_product(p) for p in rows])
+
+        if parts[0] == "shops" and len(parts) == 1:
+            count = await db.fetch_val("SELECT COUNT(*) FROM stores") or 0
+            return seo.directory_meta(count)
+
         return seo.static_meta(r)
 
     @app.get("/robots.txt", include_in_schema=False)
@@ -1629,14 +1739,21 @@ if os.path.isdir(DIST_DIR):
 
     @app.get("/sitemap.xml", include_in_schema=False)
     async def sitemap_xml():
+        stores, products = [], []
         try:
             stores = await db.fetch_all(
                 "SELECT slug, created_at FROM stores ORDER BY created_at DESC LIMIT 5000"
             )
+            products = await db.fetch_all(
+                """
+                SELECT store_slug, slug, created_at FROM products
+                WHERE active = TRUE AND slug IS NOT NULL
+                ORDER BY created_at DESC LIMIT 40000
+                """
+            )
         except Exception as e:
-            logger.error(f"sitemap store lookup failed: {e}")
-            stores = []
-        return Response(content=seo.sitemap_xml(stores), media_type="application/xml")
+            logger.error(f"sitemap lookup failed: {e}")
+        return Response(content=seo.sitemap_xml(stores, products), media_type="application/xml")
 
     @app.api_route("/{full_path:path}", methods=["GET", "HEAD"])
     async def serve_spa(full_path: str):
@@ -1691,6 +1808,18 @@ app.add_middleware(
 
 
 # ======================= Startup =======================
+async def backfill_product_slugs():
+    """Give pre-existing products a URL slug so /{store}/{product} resolves."""
+    rows = await db.fetch_all(
+        "SELECT product_id, store_slug, title FROM products WHERE slug IS NULL OR slug = '' LIMIT 5000"
+    )
+    for r in rows:
+        slug = await unique_product_slug(r["store_slug"], r["title"], exclude_id=r["product_id"])
+        await db.execute("UPDATE products SET slug = $1 WHERE product_id = $2", slug, r["product_id"])
+    if rows:
+        logger.info(f"Backfilled slugs for {len(rows)} product(s)")
+
+
 @app.on_event("startup")
 async def on_startup():
     try:
@@ -1702,6 +1831,10 @@ async def on_startup():
         logger.info("Object storage initialized")
     except Exception as e:
         logger.error(f"storage init failed: {e}")
+    try:
+        await backfill_product_slugs()
+    except Exception as e:
+        logger.error(f"product slug backfill failed: {e}")
 
 
 @app.on_event("shutdown")

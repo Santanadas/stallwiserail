@@ -78,6 +78,20 @@ STATIC_PAGES = {
             "receive payments directly in your bank account."
         ),
     },
+    "shops": {
+        "title": "Browse Shops on Stall Wise | Independent Indian Sellers",
+        "description": (
+            "Discover independent shops on Stall Wise — handmade goods, small-batch food, "
+            "crafts and more. Pay the seller directly by UPI, card or cash on delivery."
+        ),
+    },
+    "sell-online": {
+        "title": "How to Sell Online in India | Start a Shop on Stall Wise",
+        "description": (
+            "A practical guide to selling online in India: set up a storefront, accept UPI, "
+            "cards and cash on delivery, and get paid straight into your bank account."
+        ),
+    },
 }
 
 
@@ -213,6 +227,89 @@ def store_meta(store: dict, seller: dict, products: list) -> dict:
     }
 
 
+def product_jsonld(store: dict, seller: dict, product: dict) -> str:
+    """Product + Offer + BreadcrumbList — what a long-tail product query needs
+    to earn a rich result."""
+    import json
+
+    store_url = f"{SITE_URL}/{store.get('slug')}"
+    url = f"{store_url}/{product.get('slug')}"
+    images = [absolute_media(i) for i in (product.get("images") or [])]
+    images = [i for i in images if i]
+    in_stock = product.get("stock") != 0
+
+    product_node = {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        "@id": f"{url}#product",
+        "name": product.get("title"),
+        "description": _clamp(product.get("description") or product.get("title"), 500),
+        "url": url,
+        "brand": {"@type": "Brand", "name": store.get("name")},
+        "offers": {
+            "@type": "Offer",
+            "url": url,
+            "price": f"{float(product.get('price') or 0):.2f}",
+            "priceCurrency": "INR",
+            "availability": (
+                "https://schema.org/InStock" if in_stock else "https://schema.org/OutOfStock"
+            ),
+            "seller": {"@type": "Organization", "name": store.get("name"), "url": store_url},
+        },
+    }
+    if images:
+        product_node["image"] = images
+
+    breadcrumbs = {
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+            {"@type": "ListItem", "position": 1, "name": SITE_NAME, "item": f"{SITE_URL}/"},
+            {"@type": "ListItem", "position": 2, "name": store.get("name"), "item": store_url},
+            {"@type": "ListItem", "position": 3, "name": product.get("title"), "item": url},
+        ],
+    }
+    return json.dumps([product_node, breadcrumbs], separators=(",", ":"))
+
+
+def product_meta(store: dict, seller: dict, product: dict) -> dict:
+    name = product.get("title") or "Product"
+    store_name = store.get("name") or SITE_NAME
+    price = float(product.get("price") or 0)
+    desc = product.get("description")
+    if desc:
+        description = _clamp(desc)
+    else:
+        cod = "cash on delivery" if "cod" in (product.get("paymentMethods") or []) else "UPI, card or netbanking"
+        description = _clamp(
+            f"Buy {name} from {store_name} for ₹{price:,.0f} on {SITE_NAME}. "
+            f"Pay by {cod} — your money goes straight to the seller."
+        )
+    images = product.get("images") or ([product["image"]] if product.get("image") else [])
+    return {
+        "title": f"{name} — ₹{price:,.0f} | {store_name}",
+        "description": description,
+        "canonical": f"{SITE_URL}/{store.get('slug')}/{product.get('slug')}",
+        "image": absolute_media(images[0] if images else None)
+        or absolute_media((seller or {}).get("avatar")),
+        "og_type": "product",
+        "jsonld": product_jsonld(store, seller, product),
+    }
+
+
+def directory_meta(count: int = 0) -> dict:
+    return {
+        "title": f"Browse Shops on {SITE_NAME} | Independent Indian Sellers",
+        "description": _clamp(
+            f"Discover {count or ''} independent shops on {SITE_NAME} — handmade goods, "
+            f"small-batch food, crafts and more. Pay the seller directly by UPI, card or "
+            f"cash on delivery.".replace("  ", " ")
+        ),
+        "canonical": f"{SITE_URL}/shops",
+        "noindex": False,
+    }
+
+
 def static_meta(route: str) -> dict:
     r = (route or "").strip("/")
     page = STATIC_PAGES.get(r)
@@ -244,10 +341,12 @@ def robots_txt() -> str:
     )
 
 
-def sitemap_xml(stores: Iterable[dict]) -> str:
+def sitemap_xml(stores: Iterable[dict], products: Iterable[dict] = ()) -> str:
     rows = [
         ("", "daily", "1.0"),
+        ("shops", "daily", "0.9"),
         ("register", "monthly", "0.9"),
+        ("sell-online", "monthly", "0.8"),
         ("about", "monthly", "0.7"),
         ("contact", "monthly", "0.6"),
         ("terms", "yearly", "0.3"),
@@ -260,13 +359,20 @@ def sitemap_xml(stores: Iterable[dict]) -> str:
     ]
     for s in stores:
         slug = _esc(s.get("slug"))
-        lastmod = ""
         created = s.get("created_at")
-        if created:
-            lastmod = f"<lastmod>{_esc(str(created)[:10])}</lastmod>"
+        lastmod = f"<lastmod>{_esc(str(created)[:10])}</lastmod>" if created else ""
         urls.append(
             f"  <url><loc>{SITE_URL}/{slug}</loc>{lastmod}"
             f"<changefreq>daily</changefreq><priority>0.8</priority></url>"
+        )
+    for p in products:
+        if not p.get("slug") or not p.get("store_slug"):
+            continue
+        created = p.get("created_at")
+        lastmod = f"<lastmod>{_esc(str(created)[:10])}</lastmod>" if created else ""
+        urls.append(
+            f"  <url><loc>{SITE_URL}/{_esc(p['store_slug'])}/{_esc(p['slug'])}</loc>{lastmod}"
+            f"<changefreq>weekly</changefreq><priority>0.7</priority></url>"
         )
     body = "\n".join(urls)
     return (

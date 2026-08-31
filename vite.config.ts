@@ -19,6 +19,23 @@ export default defineConfig({
     tailwindcss(),
   ],
   publicDir: 'frontend/public',
+  build: {
+    // Split the big third-party libraries out of the route chunks so they cache
+    // across deploys instead of being re-downloaded with every app change.
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return;
+          if (id.includes('react-router')) return 'vendor-router';
+          if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return 'vendor-react';
+          if (id.includes('motion') || id.includes('framer')) return 'vendor-motion';
+          if (id.includes('@radix-ui')) return 'vendor-radix';
+          if (id.includes('lucide-react')) return 'vendor-icons';
+          return 'vendor';
+        },
+      },
+    },
+  },
   optimizeDeps: {
     esbuildOptions: {
       loader: {

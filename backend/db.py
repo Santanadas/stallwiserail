@@ -149,6 +149,7 @@ def _init_sqlite_schema(conn: sqlite3.Connection):
         image TEXT,
         images TEXT DEFAULT '[]',
         payment_methods TEXT DEFAULT '["online"]',
+        slug TEXT,
         created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_products_seller ON products(seller_id);
@@ -234,6 +235,7 @@ _COLUMN_MIGRATIONS: Dict[str, Dict[str, str]] = {
     "products": {
         "images": "TEXT DEFAULT '[]'",
         "payment_methods": "TEXT DEFAULT '[\"online\"]'",
+        "slug": "TEXT",
     },
     "orders": {
         "window_expires_at": "TEXT",
@@ -241,6 +243,12 @@ _COLUMN_MIGRATIONS: Dict[str, Dict[str, str]] = {
         "payment_method": "TEXT DEFAULT 'online'",
     },
 }
+
+
+# Indexes that depend on migrated columns, so they run after the ALTERs.
+_POST_MIGRATION_INDEXES = [
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_products_store_slug ON products(store_slug, slug)",
+]
 
 
 def _sqlite_migrate(c: sqlite3.Cursor):
@@ -255,6 +263,11 @@ def _sqlite_migrate(c: sqlite3.Cursor):
                     c.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
                 except Exception as e:
                     logger.warning(f"sqlite migrate {table}.{name}: {e}")
+    for stmt in _POST_MIGRATION_INDEXES:
+        try:
+            c.execute(stmt)
+        except Exception as e:
+            logger.warning(f"sqlite index: {e}")
 
 
 async def _pg_migrate(pool: asyncpg.Pool):
@@ -265,6 +278,11 @@ async def _pg_migrate(pool: asyncpg.Pool):
                     await conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {ddl}")
                 except Exception as e:
                     logger.warning(f"pg migrate {table}.{name}: {e}")
+        for stmt in _POST_MIGRATION_INDEXES:
+            try:
+                await conn.execute(stmt)
+            except Exception as e:
+                logger.warning(f"pg index: {e}")
 
 
 def _get_sqlite_conn() -> sqlite3.Connection:

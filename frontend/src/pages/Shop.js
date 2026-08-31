@@ -1,9 +1,11 @@
 import { useEffect, useState, useCallback } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import { ShoppingBag, Store, ArrowRight, Package, Share2, Check } from "lucide-react";
 import api, { formatApiError } from "@/lib/api";
 import { fileUrl } from "@/components/ImageUpload";
 import CartDrawer from "@/components/CartDrawer";
+import { useCart, unitPriceFor, isSoldOut } from "@/lib/useCart";
+import { useCheckout } from "@/lib/useCheckout";
 import { useDocumentMeta } from "@/lib/useDocumentMeta";
 
 function initials(name) {
@@ -12,22 +14,22 @@ function initials(name) {
 
 export default function Shop() {
   const { storeSlug } = useParams();
-  const navigate = useNavigate();
   const [shop, setShop] = useState(null);
-  const [err, setErr] = useState("");
+  const [loadErr, setLoadErr] = useState("");
   const [selections, setSelections] = useState({});
-  const [cart, setCart] = useState([]);
   const [buyer, setBuyer] = useState({ buyerName: "", buyerEmail: "", buyerPhone: "" });
-  const [placing, setPlacing] = useState(false);
   const [copied, setCopied] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
   const [payMethod, setPayMethod] = useState("online");
+
+  const { cart, addItem, removeItem, setQty, clear, cartTotal, cartCount, allowedPayments } =
+    useCart(storeSlug);
 
   const load = useCallback(async () => {
     try {
       const { data } = await api.get(`/shop/${storeSlug}`);
       setShop(data);
-    } catch (e) { setErr(formatApiError(e.response?.data?.detail)); }
+    } catch (e) { setLoadErr(formatApiError(e.response?.data?.detail)); }
   }, [storeSlug]);
   useEffect(() => { load(); }, [load]);
 
@@ -52,16 +54,24 @@ export default function Shop() {
   const pickOption = (pid, group, label) =>
     setSelections({ ...selections, [pid]: { ...(selections[pid] || {}), [group]: label } });
 
-  const unitPrice = (p) => {
-    const sel = selections[p.product_id] || {};
-    let price = p.price;
-    (p.optionGroups || []).forEach((g) => {
-      if (!g?.name) return;
-      const opt = (g.options || []).find((o) => o?.label === sel[g.name]);
-      if (opt) price += opt.priceDelta || 0;
-    });
-    return price;
-  };
+  const unitPrice = (p) => unitPriceFor(p, selections[p.product_id] || {});
+
+  const productsList = Array.isArray(shop?.products) ? shop.products : [];
+
+  const { checkout, placing, err, setErr } = useCheckout({
+    storeSlug,
+    storeName: shop?.store?.name,
+    cart,
+    cartTotal,
+    payMethod,
+    clear,
+  });
+
+  useEffect(() => {
+    if (allowedPayments.length && !allowedPayments.includes(payMethod)) {
+      setPayMethod(allowedPayments[0]);
+    }
+  }, [allowedPayments, payMethod]);
 
   const addToCart = (p) => {
     const sel = selections[p.product_id] || {};
@@ -72,118 +82,16 @@ export default function Shop() {
       if (opt && opt.stock === 0) { setErr(`${g.name} ${opt.label} is out of stock`); return; }
     }
     setErr("");
-    setCart([...cart, {
+    addItem({
       productId: p.product_id,
       title: p.title,
       quantity: 1,
       optionSelections: sel,
       unitPrice: unitPrice(p),
       paymentMethods: (p.paymentMethods && p.paymentMethods.length) ? p.paymentMethods : ["online"],
-    }]);
+    });
     setCartOpen(true);
   };
-
-  const removeItem = (i) => setCart(cart.filter((_, idx) => idx !== i));
-  const setQty = (i, q) => {
-    if (q < 1) return removeItem(i);
-    setCart(cart.map((c, idx) => (idx === i ? { ...c, quantity: Math.min(q, 999) } : c)));
-  };
-  const cartTotal = cart.reduce((s, c) => s + (c.unitPrice || 0) * c.quantity, 0);
-
-  // A payment method is offered only if every item in the cart accepts it.
-  const allowedPayments = cart.reduce(
-    (acc, c) => acc.filter((m) => (c.paymentMethods || ["online"]).includes(m)),
-    ["online", "cod"]
-  );
-
-  useEffect(() => {
-    if (allowedPayments.length && !allowedPayments.includes(payMethod)) {
-      setPayMethod(allowedPayments[0]);
-    }
-  }, [allowedPayments, payMethod]);
-
-  const isSoldOut = (p) => {
-    if (p.stock === 0) return true;
-    if ((p.optionGroups || []).length && p.optionGroups.every((g) => (g.options || []).every((o) => o.stock === 0))) return true;
-    return false;
-  };
-
-  const loadRazorpay = () =>
-    new Promise((res) => {
-      if (window.Razorpay) return res(true);
-      const s = document.createElement("script");
-      s.src = "https://checkout.razorpay.com/v1/checkout.js";
-      s.onload = () => res(true);
-      s.onerror = () => res(false);
-      document.body.appendChild(s);
-    });
-
-  const checkout = async () => {
-    setErr("");
-    setPlacing(true);
-    const email = buyer.buyerEmail.trim();
-    try {
-      const { data } = await api.post("/orders", {
-        storeSlug,
-        buyerName: buyer.buyerName.trim(),
-        buyerEmail: email,
-        buyerPhone: buyer.buyerPhone.replace(/\D/g, ""),
-        paymentMethod: payMethod,
-        items: cart.map((c) => ({ productId: c.productId, quantity: c.quantity, optionSelections: c.optionSelections })),
-      });
-
-      const orderId = data.orderId;
-      const goToOrder = () => navigate(`/order/${orderId}?email=${encodeURIComponent(email)}`);
-
-      // Cash on delivery: nothing to charge now — the seller collects at handover.
-      if (payMethod === "cod" || !data.razorpayOrderId) {
-        goToOrder();
-        return;
-      }
-
-      const ok = await loadRazorpay();
-      if (!ok || !window.Razorpay) {
-        setErr("Could not load the payment window. Your order was saved — open it to pay.");
-        goToOrder();
-        return;
-      }
-
-      const rzp = new window.Razorpay({
-        key: data.razorpayKeyId,
-        order_id: data.razorpayOrderId,
-        amount: Math.round((data.amount || cartTotal) * 100),
-        currency: "INR",
-        name: shop?.store?.name || "Stall Wise",
-        description: `Order ${orderId}`,
-        prefill: { name: buyer.buyerName.trim(), email, contact: buyer.buyerPhone.replace(/\D/g, "") },
-        theme: { color: "#FF4F00" },
-        modal: { ondismiss: () => { setPlacing(false); goToOrder(); } },
-        handler: async (res) => {
-          try {
-            await api.post(`/orders/${orderId}/verify-payment`, {
-              razorpay_order_id: res.razorpay_order_id,
-              razorpay_payment_id: res.razorpay_payment_id,
-              razorpay_signature: res.razorpay_signature,
-            });
-          } catch {
-            // Payment went through at Razorpay; the webhook will reconcile.
-          } finally {
-            goToOrder();
-          }
-        },
-      });
-      rzp.on("payment.failed", (r) => {
-        setErr(r.error?.description || "Payment failed. Your order was saved — open it to try again.");
-        setPlacing(false);
-      });
-      rzp.open();
-    } catch (e) {
-      setErr(formatApiError(e.response?.data?.detail));
-      setPlacing(false);
-    }
-  };
-
-  const productsList = Array.isArray(shop?.products) ? shop.products : [];
 
   // Schema.org Structured Data for Store & Products
   const shopSchema = shop?.store ? {
@@ -225,11 +133,11 @@ export default function Shop() {
     image: shop?.seller?.avatar ? fileUrl(shop.seller.avatar) : undefined,
   });
 
-  if (err && !shop) return (
+  if (loadErr && !shop) return (
     <div className="mk flex min-h-screen flex-col items-center justify-center gap-4 bg-[#FAFAFA] px-6 text-center" data-testid="shop-error">
       <Store className="h-10 w-10 text-neutral-300" />
       <p className="mk-head text-2xl font-black tracking-tighter">Shop not found</p>
-      <p className="max-w-sm text-sm text-[#525252]">{err}</p>
+      <p className="max-w-sm text-sm text-[#525252]">{loadErr}</p>
       <Link to="/" className="mt-2 border-2 border-[#0A0A0A] bg-white px-5 py-2.5 text-sm font-bold transition-transform hover:-translate-y-0.5 hover:shadow-[4px_4px_0px_0px_rgba(10,10,10,1)]">Back to Stall Wise</Link>
     </div>
   );
@@ -267,7 +175,7 @@ export default function Shop() {
               data-testid="cart-jump"
             >
               <ShoppingBag className="h-4 w-4" /> Cart
-              {cart.length > 0 && <span className="ml-1 border border-[#0A0A0A] bg-[#FF4F00] px-1.5 text-xs text-white" data-testid="cart-count">{cart.length}</span>}
+              {cartCount > 0 && <span className="ml-1 border border-[#0A0A0A] bg-[#FF4F00] px-1.5 text-xs text-white" data-testid="cart-count">{cartCount}</span>}
             </button>
           </div>
         </div>
@@ -323,20 +231,32 @@ export default function Shop() {
               const sold = isSoldOut(p);
               return (
                 <div key={p.product_id} data-testid={`shop-product-${p.product_id}`} className="group flex flex-col border-2 border-[#0A0A0A] bg-white transition-transform hover:-translate-y-1 hover:shadow-[6px_6px_0px_0px_rgba(10,10,10,1)]">
-                  <div className="relative aspect-square overflow-hidden border-b-2 border-[#0A0A0A] bg-[#FAFAFA]">
+                  <Link
+                    to={p.slug ? `/${storeSlug}/${p.slug}` : `/${storeSlug}`}
+                    aria-label={p.title}
+                    className="relative block aspect-square overflow-hidden border-b-2 border-[#0A0A0A] bg-[#FAFAFA]"
+                  >
                     {p.image ? (
                       <img src={fileUrl(p.image)} alt={p.title} className="h-full w-full object-cover" loading="lazy" />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center"><Package className="h-10 w-10 text-neutral-300" /></div>
                     )}
                     {sold && <div className="absolute inset-0 flex items-center justify-center bg-white/70"><span className="border-2 border-[#0A0A0A] bg-white px-3 py-1 text-xs font-black uppercase tracking-widest">Sold out</span></div>}
-                  </div>
+                  </Link>
                   <div className="flex flex-1 flex-col p-4 sm:p-5">
                     <div className="flex items-start justify-between gap-3">
-                      <h3 className="text-base font-bold leading-snug">{p.title}</h3>
+                      <h3 className="text-base font-bold leading-snug">
+                        <Link
+                          to={p.slug ? `/${storeSlug}/${p.slug}` : `/${storeSlug}`}
+                          data-testid={`product-link-${p.product_id}`}
+                          className="hover:text-[#FF4F00]"
+                        >
+                          {p.title}
+                        </Link>
+                      </h3>
                       <span className="mk-head shrink-0 text-lg font-black tracking-tighter">₹{unitPrice(p)}</span>
                     </div>
-                    {p.description && <p className="mt-2 text-sm leading-relaxed text-[#525252]">{p.description}</p>}
+                    {p.description && <p className="mt-2 line-clamp-3 text-sm leading-relaxed text-[#525252]">{p.description}</p>}
                     {(p.paymentMethods || []).includes("cod") && (
                       <span className="mt-2 inline-block w-fit border border-[#0A0A0A] bg-[#FFF4E0] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">
                         Cash on delivery
@@ -389,7 +309,7 @@ export default function Shop() {
         <div className="fixed bottom-0 left-0 right-0 z-40 border-t-2 border-[#0A0A0A] bg-[#0A0A0A] p-3 text-white shadow-2xl sm:hidden">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <span className="text-xs text-neutral-400">{cart.length} {cart.length === 1 ? "item" : "items"}</span>
+              <span className="text-xs text-neutral-400">{cartCount} {cartCount === 1 ? "item" : "items"}</span>
               <p className="mk-head text-lg font-black text-white">₹{cartTotal}</p>
             </div>
             <button
@@ -412,7 +332,7 @@ export default function Shop() {
         cartTotal={cartTotal}
         buyer={buyer}
         setBuyer={setBuyer}
-        checkout={checkout}
+        checkout={() => checkout(buyer)}
         placing={placing}
         err={err}
         allowedPayments={allowedPayments}
