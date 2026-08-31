@@ -147,6 +147,7 @@ class ProductIn(BaseModel):
     optionGroups: List[OptionGroupIn] = Field(default_factory=list, max_length=5)
     active: bool = True
     image: Optional[str] = Field(default=None, max_length=500)
+    images: List[str] = Field(default_factory=list, max_length=8)
 
 
 class OrderItemIn(BaseModel):
@@ -248,6 +249,14 @@ def public_product(p: Optional[dict]) -> Optional[dict]:
             opts = json.loads(opts)
         except Exception:
             opts = []
+    imgs = p.get("images", [])
+    if isinstance(imgs, str):
+        try:
+            imgs = json.loads(imgs)
+        except Exception:
+            imgs = []
+    if not imgs and p.get("image"):
+        imgs = [p["image"]]
     return {
         "product_id": p["product_id"],
         "sellerId": p.get("seller_id") or p.get("sellerId"),
@@ -258,7 +267,8 @@ def public_product(p: Optional[dict]) -> Optional[dict]:
         "stock": p.get("stock"),
         "optionGroups": opts or [],
         "active": bool(p.get("active", True)),
-        "image": p.get("image"),
+        "image": (imgs[0] if imgs else p.get("image")),
+        "images": imgs or [],
         "created_at": p["created_at"],
     }
 
@@ -914,14 +924,25 @@ async def disconnect_razorpay(user=Depends(get_current_user)):
 
 
 # ======================= Products =======================
+def _clean_product_images(body: "ProductIn") -> List[str]:
+    out: List[str] = []
+    for p in (body.images or []):
+        p = (p or "").strip()
+        if p and security.is_safe_image_path(p) and p not in out:
+            out.append(p)
+    if not out and body.image and security.is_safe_image_path(body.image.strip()):
+        out = [body.image.strip()]
+    return out[:8]
+
+
 @api.post("/products")
 async def create_product(body: ProductIn, user=Depends(get_current_user)):
     store = await get_my_store(user)
     if not store:
         raise HTTPException(status_code=400, detail="Create a store first")
-    if body.image and not security.is_safe_image_path(body.image):
-        raise HTTPException(status_code=400, detail="Invalid image path format")
-    
+
+    images = _clean_product_images(body)
+    primary = images[0] if images else None
     prod_id = new_id("prod")
     title = security.sanitize_text(body.title, 200)
     desc = security.sanitize_text(body.description, 2000)
@@ -930,16 +951,17 @@ async def create_product(body: ProductIn, user=Depends(get_current_user)):
 
     await db.execute(
         """
-        INSERT INTO products (product_id, seller_id, store_slug, title, description, price, stock, option_groups, active, image, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        INSERT INTO products (product_id, seller_id, store_slug, title, description, price, stock, option_groups, active, image, images, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         """,
-        prod_id, user["user_id"], store["slug"], title, desc, body.price, body.stock, option_groups_json, body.active, body.image, created_at
+        prod_id, user["user_id"], store["slug"], title, desc, body.price, body.stock,
+        option_groups_json, body.active, primary, images, created_at
     )
     return {
         "product_id": prod_id, "sellerId": user["user_id"], "storeSlug": store["slug"],
         "title": title, "description": desc, "price": body.price, "stock": body.stock,
-        "optionGroups": option_groups_json, "active": body.active, "image": body.image,
-        "created_at": created_at,
+        "optionGroups": option_groups_json, "active": body.active,
+        "image": primary, "images": images, "created_at": created_at,
     }
 
 
@@ -954,9 +976,9 @@ async def update_product(product_id: str, body: ProductIn, user=Depends(get_curr
     prod = await db.fetch_one("SELECT * FROM products WHERE product_id = $1 AND seller_id = $2", product_id, user["user_id"])
     if not prod:
         raise HTTPException(status_code=404, detail="Product not found")
-    if body.image and not security.is_safe_image_path(body.image):
-        raise HTTPException(status_code=400, detail="Invalid image path format")
-    
+
+    images = _clean_product_images(body)
+    primary = images[0] if images else None
     title = security.sanitize_text(body.title, 200)
     desc = security.sanitize_text(body.description, 2000)
     option_groups_json = [og.model_dump() for og in body.optionGroups]
@@ -964,10 +986,10 @@ async def update_product(product_id: str, body: ProductIn, user=Depends(get_curr
     await db.execute(
         """
         UPDATE products
-        SET title = $1, description = $2, price = $3, stock = $4, option_groups = $5, active = $6, image = $7
-        WHERE product_id = $8 AND seller_id = $9
+        SET title = $1, description = $2, price = $3, stock = $4, option_groups = $5, active = $6, image = $7, images = $8
+        WHERE product_id = $9 AND seller_id = $10
         """,
-        title, desc, body.price, body.stock, option_groups_json, body.active, body.image, product_id, user["user_id"]
+        title, desc, body.price, body.stock, option_groups_json, body.active, primary, images, product_id, user["user_id"]
     )
     updated = await db.fetch_one("SELECT * FROM products WHERE product_id = $1", product_id)
     return public_product(updated)

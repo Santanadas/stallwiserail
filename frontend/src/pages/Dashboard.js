@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { motion, AnimatePresence } from "motion/react";
+import { motion } from "motion/react";
 import {
   ExternalLink,
   LogOut,
@@ -42,6 +42,7 @@ import api, { formatApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Panel, Field, Btn, StatusPill, Note } from "@/components/Kit";
 import ImageUpload, { fileUrl } from "@/components/ImageUpload";
+import ProductEditor from "@/components/ProductEditor";
 import StoreQrModal from "@/components/StoreQrModal";
 import { useDocumentMeta } from "@/lib/useDocumentMeta";
 
@@ -500,15 +501,34 @@ function ProductsSection({
   products = [],
   loadProducts,
 }) {
-  const [form, setForm] = useState({ title: "", description: "", price: "", stock: "" });
-  const [image, setImage] = useState(null);
-  const [groups, setGroups] = useState([]);
-  const [err, setErr] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [stockFilter, setStockFilter] = useState("all"); // 'all' | 'in_stock' | 'low_stock' | 'sold_out'
 
   const productList = Array.isArray(products) ? products : [];
+
+  // External "Add Product" trigger (hero button / quick-add card)
+  useEffect(() => {
+    if (showAddModal) {
+      setEditingProduct(null);
+      setEditorOpen(true);
+    }
+  }, [showAddModal]);
+
+  const openCreate = () => {
+    setEditingProduct(null);
+    setEditorOpen(true);
+  };
+  const openEdit = (p) => {
+    setEditingProduct(p);
+    setEditorOpen(true);
+  };
+  const closeEditor = () => {
+    setEditorOpen(false);
+    setEditingProduct(null);
+    setShowAddModal && setShowAddModal(false);
+  };
 
   // Filter products by search and stock
   const filteredProducts = useMemo(() => {
@@ -528,65 +548,6 @@ function ProductsSection({
     });
   }, [productList, searchQuery, stockFilter]);
 
-  const upd = (k) => (e) => setForm({ ...form, [k]: e.target.value });
-  const addGroup = () => setGroups([...groups, { name: "", optionsText: "" }]);
-  const updGroup = (i, k) => (e) => {
-    const g = [...groups];
-    g[i][k] = e.target.value;
-    setGroups(g);
-  };
-
-  const parseGroups = () =>
-    groups
-      .filter((g) => g && g.name)
-      .map((g) => ({
-        name: g.name,
-        options: (g.optionsText || "")
-          .split(",")
-          .map((line) => {
-            const [label, priceDelta, stock] = line.split("|").map((x) => x.trim());
-            return {
-              label,
-              priceDelta: Number(priceDelta || 0),
-              stock: stock ? Number(stock) : null,
-            };
-          })
-          .filter((o) => o.label),
-      }));
-
-  const create = async () => {
-    setErr("");
-    if (!form.title.trim()) {
-      setErr("Please enter a product title");
-      return;
-    }
-    if (!form.price || Number(form.price) <= 0) {
-      setErr("Please enter a valid product price");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      await api.post("/products", {
-        title: form.title,
-        description: form.description,
-        price: Number(form.price),
-        stock: form.stock ? Number(form.stock) : null,
-        optionGroups: parseGroups(),
-        active: true,
-        image,
-      });
-      setForm({ title: "", description: "", price: "", stock: "" });
-      setImage(null);
-      setGroups([]);
-      if (setShowAddModal) setShowAddModal(false);
-      loadProducts();
-    } catch (e) {
-      setErr(formatApiError(e.response?.data?.detail));
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   const del = async (id) => {
     if (confirm("Delete this product from your store?")) {
       await api.delete(`/products/${id}`);
@@ -604,149 +565,12 @@ function ProductsSection({
 
   return (
     <div className="space-y-6">
-      {/* Product Creation Drawer / Modal */}
-      <AnimatePresence>
-        {showAddModal && (
-          <motion.div
-            initial={{ opacity: 0, y: -15 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -15 }}
-            className="overflow-hidden rounded-2xl border border-neutral-200 bg-white p-6 shadow-xl"
-          >
-            <div className="mb-6 flex items-center justify-between border-b border-neutral-100 pb-4">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#FF4F00]/10 text-[#FF4F00]">
-                  <Package className="h-5 w-5" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-[#0A0A0A] text-base">Add New Product to Catalog</h3>
-                  <p className="text-xs text-neutral-500">List items with custom sizes, colors and pricing</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowAddModal(false)}
-                className="rounded-lg p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 transition-colors"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <div className="space-y-6">
-              {/* Image Upload */}
-              <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-neutral-600 mb-1.5 block">
-                  Product Image
-                </span>
-                <ImageUpload
-                  value={image}
-                  onChange={setImage}
-                  kind="product"
-                  label="Upload item photo"
-                  testId="product-image"
-                />
-              </div>
-
-              {/* Basic Details */}
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <Field
-                  label="Title / Item Name"
-                  data-testid="product-title"
-                  placeholder="e.g. Handcrafted Ceramic Mug"
-                  value={form.title}
-                  onChange={upd("title")}
-                />
-                <Field
-                  label="Price (₹ INR)"
-                  data-testid="product-price"
-                  type="number"
-                  placeholder="599"
-                  value={form.price}
-                  onChange={upd("price")}
-                />
-                <Field
-                  label="Inventory Stock (Units)"
-                  data-testid="product-stock"
-                  type="number"
-                  placeholder="Leave empty for unlimited"
-                  value={form.stock}
-                  onChange={upd("stock")}
-                />
-                <Field
-                  label="Short Caption / Tagline"
-                  data-testid="product-desc"
-                  placeholder="Materials, sizing & details"
-                  value={form.description}
-                  onChange={upd("description")}
-                />
-              </div>
-
-              {/* Variant Groups */}
-              <div className="rounded-xl border border-neutral-200/80 bg-neutral-50/50 p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <span className="text-xs font-bold uppercase tracking-wider text-neutral-700">
-                      Product Options & Variants (Optional)
-                    </span>
-                    <p className="text-xs text-neutral-500">Add size, color, or material choices</p>
-                  </div>
-                  <Btn variant="ghost" data-testid="add-group-btn" onClick={addGroup} className="py-1.5 px-3 text-xs">
-                    <Plus className="h-3.5 w-3.5" /> Add Option Group
-                  </Btn>
-                </div>
-
-                {groups.map((g, i) => (
-                  <div key={i} className="mt-3 grid gap-3 sm:grid-cols-3 items-end bg-white p-3 rounded-xl border border-neutral-200">
-                    <Field
-                      label={`Group ${i + 1} Name`}
-                      data-testid={`group-name-${i}`}
-                      placeholder="e.g. Size or Color"
-                      value={g?.name || ""}
-                      onChange={updGroup(i, "name")}
-                    />
-                    <div className="sm:col-span-2 flex items-end gap-2">
-                      <div className="flex-1">
-                        <Field
-                          label="Options (label|priceDelta|stock)"
-                          data-testid={`group-options-${i}`}
-                          placeholder="Small|0|10, Large|150|5"
-                          value={g?.optionsText || ""}
-                          onChange={updGroup(i, "optionsText")}
-                          helper="Format: Name | Extra ₹ | Quantity"
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setGroups(groups.filter((_, idx) => idx !== i))}
-                        className="mb-1 rounded-lg p-2 text-rose-500 hover:bg-rose-50 transition-colors"
-                        title="Remove group"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Form Action */}
-              <div className="flex items-center justify-end gap-3 pt-2">
-                <Btn variant="outline" onClick={() => setShowAddModal(false)}>
-                  Cancel
-                </Btn>
-                <Btn
-                  variant="primary"
-                  data-testid="product-create-btn"
-                  onClick={create}
-                  disabled={submitting}
-                >
-                  {submitting ? "Publishing..." : "Publish Product to Store"}
-                </Btn>
-              </div>
-
-              {err && <Note tone="error">{err}</Note>}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <ProductEditor
+        open={editorOpen}
+        product={editingProduct}
+        onClose={closeEditor}
+        onSaved={loadProducts}
+      />
 
       {/* Catalog Search & Controls Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl border border-neutral-200/90 bg-white p-4 shadow-sm">
@@ -826,7 +650,7 @@ function ProductsSection({
           <Btn
             variant="primary"
             data-testid="open-add-product-btn"
-            onClick={() => setShowAddModal && setShowAddModal(true)}
+            onClick={openCreate}
             className="py-2"
           >
             <Plus className="h-4 w-4" />
@@ -841,7 +665,7 @@ function ProductsSection({
           {/* Quick Add Card */}
           <button
             type="button"
-            onClick={() => setShowAddModal && setShowAddModal(true)}
+            onClick={openCreate}
             className="group flex aspect-square flex-col items-center justify-center rounded-2xl border-2 border-dashed border-neutral-200 bg-neutral-50/50 p-6 text-center transition-all hover:border-[#FF4F00] hover:bg-[#FFF4E0]/20"
           >
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white border border-neutral-200 shadow-2xs transition-transform group-hover:scale-110 group-hover:bg-[#FF4F00] group-hover:text-white group-hover:border-[#FF4F00]">
@@ -852,11 +676,14 @@ function ProductsSection({
           </button>
 
           {/* Product Cards */}
-          {filteredProducts.map((p) => (
+          {filteredProducts.map((p) => {
+            const photos = (p.images && p.images.length) ? p.images.length : (p.image ? 1 : 0);
+            return (
             <div
               key={p.product_id}
               data-testid={`product-card-${p.product_id}`}
-              className="group relative flex flex-col overflow-hidden rounded-2xl border border-neutral-200/90 bg-white shadow-2xs transition-all hover:shadow-md hover:border-neutral-300"
+              onClick={() => openEdit(p)}
+              className="group relative flex cursor-pointer flex-col overflow-hidden rounded-2xl border border-neutral-200/90 bg-white shadow-2xs transition-all hover:shadow-md hover:border-neutral-300"
             >
               {/* Product Image Container */}
               <div className="relative aspect-square w-full overflow-hidden bg-neutral-100">
@@ -871,6 +698,17 @@ function ProductsSection({
                     <Package className="h-10 w-10 text-neutral-300" />
                     <span className="mt-2 text-xs font-bold text-neutral-500 line-clamp-1">{p.title}</span>
                   </div>
+                )}
+
+                {!p.active && (
+                  <span className="absolute left-2.5 top-2.5 rounded-full bg-neutral-900/80 px-2 py-0.5 text-[10px] font-bold text-white shadow-sm">
+                    Hidden
+                  </span>
+                )}
+                {photos > 1 && (
+                  <span className="absolute bottom-2.5 left-2.5 rounded-full bg-neutral-900/70 px-2 py-0.5 text-[10px] font-bold text-white">
+                    {photos} photos
+                  </span>
                 )}
 
                 {/* Stock Status Badge */}
@@ -890,18 +728,27 @@ function ProductsSection({
                   ) : null}
                 </div>
 
-                {/* Quick Delete Overlay Button */}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    del(p.product_id);
-                  }}
-                  className="absolute bottom-2.5 right-2.5 flex h-8 w-8 items-center justify-center rounded-xl bg-white/90 backdrop-blur-xs text-neutral-600 shadow-sm opacity-0 transition-all hover:bg-rose-600 hover:text-white group-hover:opacity-100"
-                  title="Delete product"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
+                {/* Hover actions */}
+                <div className="absolute bottom-2.5 right-2.5 flex gap-1.5 opacity-0 transition-all group-hover:opacity-100">
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); openEdit(p); }}
+                    className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/95 text-neutral-700 shadow-sm hover:bg-neutral-900 hover:text-white"
+                    title="Edit product"
+                    data-testid={`product-edit-${p.product_id}`}
+                  >
+                    <Edit3 className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); del(p.product_id); }}
+                    className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/95 text-neutral-600 shadow-sm hover:bg-rose-600 hover:text-white"
+                    title="Delete product"
+                    data-testid={`product-del-${p.product_id}`}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
 
               {/* Product Info */}
@@ -914,13 +761,14 @@ function ProductsSection({
                   <span className="font-black text-sm text-[#0A0A0A]">₹{p.price}</span>
                   {(p.optionGroups || []).length > 0 && (
                     <span className="text-[10px] font-bold text-neutral-500 bg-neutral-100 px-2 py-0.5 rounded-full">
-                      {p.optionGroups.length} options
+                      {p.optionGroups.length} variant{p.optionGroups.length > 1 ? "s" : ""}
                     </span>
                   )}
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -977,15 +825,25 @@ function ProductsSection({
                     <td className="px-5 py-3.5 text-xs text-neutral-500">
                       {(p.optionGroups || []).map((g) => `${g?.name || "Option"}`).join(", ") || "None"}
                     </td>
-                    <td className="px-5 py-3.5 text-right">
-                      <button
-                        data-testid={`product-del-${p.product_id}`}
-                        onClick={() => del(p.product_id)}
-                        className="rounded-lg p-1.5 text-neutral-400 hover:bg-rose-50 hover:text-rose-600 transition-colors"
-                        title="Delete product"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                    <td className="px-5 py-3.5">
+                      <div className="flex justify-end gap-1">
+                        <button
+                          data-testid={`product-edit-row-${p.product_id}`}
+                          onClick={() => openEdit(p)}
+                          className="rounded-lg p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-800 transition-colors"
+                          title="Edit product"
+                        >
+                          <Edit3 className="h-4 w-4" />
+                        </button>
+                        <button
+                          data-testid={`product-del-row-${p.product_id}`}
+                          onClick={() => del(p.product_id)}
+                          className="rounded-lg p-1.5 text-neutral-400 hover:bg-rose-50 hover:text-rose-600 transition-colors"
+                          title="Delete product"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

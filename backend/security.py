@@ -43,12 +43,15 @@ def is_safe_image_path(path: Optional[str]) -> bool:
     if not path:
         return True
     p = path.strip()
+    if ".." in p:
+        return False
     if p.startswith("/api/files/"):
-        # Validate path format: marketo/uploads/...
-        return bool(re.match(r"^/api/files/[a-zA-Z0-9_\-/\.]+$", p)) and ".." not in p
+        return bool(re.match(r"^/api/files/[a-zA-Z0-9_\-/\.]+$", p))
     if p.startswith("https://") or p.startswith("http://"):
         return not any(x in p.lower() for x in ("javascript:", "data:", "vbscript:", "<", ">"))
-    return False
+    # Bare object-storage key produced by storage.build_path, e.g.
+    # "marketo/uploads/<user_id>/<uuid>.png"
+    return bool(re.match(r"^[a-z0-9]+/uploads/[a-zA-Z0-9_\-/\.]+$", p))
 
 
 # ---------- In-Memory Sliding Window Rate Limiter ----------
