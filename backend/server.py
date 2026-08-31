@@ -28,6 +28,7 @@ import security
 import email_service
 import storage
 import route_service
+import seo
 
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 PREMIUM_TIER = "Stall Wise Pro"
@@ -1592,12 +1593,55 @@ if os.path.isdir(DIST_DIR):
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
     _DIST_REAL = os.path.realpath(DIST_DIR)
+    _index_cache: Dict[str, Any] = {"mtime": None, "html": ""}
+
+    def _base_index() -> str:
+        """dist/index.html, re-read whenever the build changes."""
+        path = os.path.join(_DIST_REAL, "index.html")
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            return ""
+        if _index_cache["mtime"] != mtime:
+            with open(path, "r", encoding="utf-8") as f:
+                _index_cache["html"] = f.read()
+            _index_cache["mtime"] = mtime
+        return _index_cache["html"]
+
+    async def _seo_meta_for(route: str) -> dict:
+        """Resolve the SEO tags for a route. A single-segment path that matches
+        a store slug renders that shop's own title, description and offers."""
+        r = (route or "").strip("/")
+        if r and "/" not in r and r not in seo.STATIC_PAGES and not seo.is_noindex(r):
+            store = await db.fetch_one("SELECT * FROM stores WHERE slug = $1", r.lower())
+            if store:
+                seller = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", store["seller_id"])
+                rows = await db.fetch_all(
+                    "SELECT * FROM products WHERE store_slug = $1 AND active = TRUE ORDER BY created_at DESC LIMIT 50",
+                    store["slug"],
+                )
+                return seo.store_meta(store, seller or {}, [public_product(p) for p in rows])
+        return seo.static_meta(r)
+
+    @app.get("/robots.txt", include_in_schema=False)
+    async def robots_txt():
+        return Response(content=seo.robots_txt(), media_type="text/plain")
+
+    @app.get("/sitemap.xml", include_in_schema=False)
+    async def sitemap_xml():
+        try:
+            stores = await db.fetch_all(
+                "SELECT slug, created_at FROM stores ORDER BY created_at DESC LIMIT 5000"
+            )
+        except Exception as e:
+            logger.error(f"sitemap store lookup failed: {e}")
+            stores = []
+        return Response(content=seo.sitemap_xml(stores), media_type="application/xml")
 
     @app.api_route("/{full_path:path}", methods=["GET", "HEAD"])
     async def serve_spa(full_path: str):
         if full_path.startswith("api") or full_path.startswith("uploads"):
             raise HTTPException(status_code=404, detail="Not found")
-        index_file = os.path.join(_DIST_REAL, "index.html")
         rel = (full_path or "").lstrip("/\\")
         candidate = os.path.realpath(os.path.join(_DIST_REAL, rel))
         if (
@@ -1606,9 +1650,26 @@ if os.path.isdir(DIST_DIR):
             and os.path.isfile(candidate)
         ):
             return FileResponse(candidate)
-        if os.path.isfile(index_file):
-            return FileResponse(index_file)
-        raise HTTPException(status_code=404, detail="Not found")
+
+        base = _base_index()
+        if not base:
+            raise HTTPException(status_code=404, detail="Not found")
+        try:
+            meta = await _seo_meta_for(rel)
+            head = seo.build_head(
+                title=meta["title"],
+                description=meta["description"],
+                canonical=meta["canonical"],
+                image=meta.get("image"),
+                noindex=meta.get("noindex", False),
+                og_type=meta.get("og_type", "website"),
+                jsonld=meta.get("jsonld"),
+            )
+            body = seo.inject(base, head)
+        except Exception as e:
+            logger.error(f"SEO render failed for /{rel}: {e}")
+            body = base
+        return Response(content=body, media_type="text/html; charset=utf-8")
 
 # Explicit, credentialed CORS allowlist. Add deploy/preview origins via
 # EXTRA_CORS_ORIGINS (comma-separated) rather than matching whole providers —

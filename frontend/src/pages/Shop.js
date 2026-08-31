@@ -213,9 +213,13 @@ export default function Shop() {
     })),
   } : null;
 
+  // Keep these in step with backend/seo.py store_meta() so the tags don't flip
+  // between the server-rendered document and the client render.
   useDocumentMeta({
-    title: shop?.store?.name ? `${shop.store.name} | Stall Wise` : "Shop | Stall Wise",
-    description: shop?.store?.bio || "Shop directly and pay the seller — zero commission on Stall Wise.",
+    title: shop?.store?.name ? `${shop.store.name} — Shop Online | Stall Wise` : "Shop | Stall Wise",
+    description:
+      shop?.store?.bio ||
+      `Shop ${productsList.length || ""} products from ${shop?.store?.name || "this seller"} on Stall Wise. Pay securely by UPI, card or cash on delivery — your money goes straight to the seller.`,
     path: `/${storeSlug}`,
     schemaData: shopSchema,
     image: shop?.seller?.avatar ? fileUrl(shop.seller.avatar) : undefined,

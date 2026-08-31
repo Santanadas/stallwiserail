@@ -1,4 +1,14 @@
 User-agent: *
 Allow: /
+Disallow: /dashboard
+Disallow: /onboarding
+Disallow: /login
+Disallow: /forgot-password
+Disallow: /reset-password
+Disallow: /verify-email
+Disallow: /order/
+Disallow: /orders/
+Disallow: /auth
+Disallow: /api/
 
 Sitemap: https://stallwise.in/sitemap.xml
