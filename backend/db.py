@@ -24,7 +24,16 @@ _sqlite_lock = asyncio.Lock()
 _last_db_error: Optional[str] = None
 
 ROOT_DIR = Path(__file__).parent.resolve()
-DB_FILE = Path("/data/stallwise.db") if Path("/data").is_dir() else (ROOT_DIR / "stallwise.db")
+
+
+def _default_sqlite_path() -> Path:
+    override = os.environ.get("STALLWISE_SQLITE_PATH")
+    if override:
+        return Path(override)
+    return Path("/data/stallwise.db") if Path("/data").is_dir() else (ROOT_DIR / "stallwise.db")
+
+
+DB_FILE = _default_sqlite_path()
 
 
 def get_database_url() -> str:

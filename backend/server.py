@@ -1135,9 +1135,16 @@ async def update_product(product_id: str, body: ProductIn, user=Depends(get_curr
 
 @api.delete("/products/{product_id}")
 async def delete_product(product_id: str, user=Depends(get_current_user)):
-    res = await db.execute("DELETE FROM products WHERE product_id = $1 AND seller_id = $2", product_id, user["user_id"])
-    if "0" in res:
+    # Check ownership explicitly: db.execute() returns "SUCCESS" on SQLite and
+    # "DELETE n" on Postgres, so there is no portable rowcount to test.
+    owned = await db.fetch_one(
+        "SELECT product_id FROM products WHERE product_id = $1 AND seller_id = $2",
+        product_id, user["user_id"],
+    )
+    if not owned:
         raise HTTPException(status_code=404, detail="Product not found")
+    await db.execute("DELETE FROM products WHERE product_id = $1 AND seller_id = $2",
+                     product_id, user["user_id"])
     return {"ok": True}
 
 

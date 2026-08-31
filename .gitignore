@@ -92,3 +92,9 @@ android-sdk/
 credentials.json
 *.key
 .credentials
+
+# Test artefacts
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
