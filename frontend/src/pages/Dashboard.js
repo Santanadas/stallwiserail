@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import {
   ExternalLink,
   LogOut,
@@ -47,14 +47,71 @@ import StoreQrModal from "@/components/StoreQrModal";
 import { useDocumentMeta } from "@/lib/useDocumentMeta";
 
 /* ==========================================================================
+   SETTINGS — shared bits
+   ========================================================================== */
+const SettingsCard = ({ title, description, children, footer, testId }) => (
+  <section
+    data-testid={testId}
+    className="overflow-hidden rounded-2xl border border-neutral-200/90 bg-white shadow-2xs"
+  >
+    <div className="border-b border-neutral-100 px-5 py-4 sm:px-6">
+      <h3 className="mk-head text-sm font-black tracking-tight text-[#0A0A0A]">{title}</h3>
+      {description && <p className="mt-0.5 text-xs leading-relaxed text-neutral-500">{description}</p>}
+    </div>
+    <div className="px-5 py-5 sm:px-6">{children}</div>
+    {footer && <div className="border-t border-neutral-100 bg-neutral-50/60 px-5 py-3 sm:px-6">{footer}</div>}
+  </section>
+);
+
+/* A label/value row for read-only account facts. */
+const InfoRow = ({ label, value, children }) => (
+  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-100 py-3 last:border-0 last:pb-0 first:pt-0">
+    <span className="text-xs font-bold uppercase tracking-wider text-neutral-400">{label}</span>
+    {children || <span className="text-sm font-semibold text-[#0A0A0A] break-all">{value}</span>}
+  </div>
+);
+
+/* ==========================================================================
    STORE SETTINGS SECTION
    ========================================================================== */
 function StoreSection({ store, onChange, user, refreshUser }) {
   const [err, setErr] = useState("");
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [baseline, setBaseline] = useState(null);
+  const [copied, setCopied] = useState(false);
+
+  // Snapshot the saved state so we can tell when there are unsaved edits.
+  useEffect(() => {
+    if (store && !baseline) {
+      setBaseline({
+        name: store.name || "",
+        bio: store.bio || "",
+        acceptanceWindowMinutes: String(store.acceptanceWindowMinutes ?? 120),
+      });
+    }
+  }, [store, baseline]);
+
+  const dirty =
+    baseline &&
+    (baseline.name !== (store?.name || "") ||
+      baseline.bio !== (store?.bio || "") ||
+      baseline.acceptanceWindowMinutes !== String(store?.acceptanceWindowMinutes ?? 120));
 
   if (!store) return null;
+
+  const copyHandle = async () => {
+    try {
+      await navigator.clipboard.writeText(`https://stallwise.in/${store.slug}`);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {}
+  };
+
+  const discard = () => {
+    if (!baseline) return;
+    onChange({ ...store, ...baseline, acceptanceWindowMinutes: Number(baseline.acceptanceWindowMinutes) }, true);
+  };
 
   const save = async () => {
     setErr("");
@@ -65,6 +122,11 @@ function StoreSection({ store, onChange, user, refreshUser }) {
         name: store?.name || "",
         bio: store?.bio || "",
         acceptanceWindowMinutes: Number(store?.acceptanceWindowMinutes || 120),
+      });
+      setBaseline({
+        name: store?.name || "",
+        bio: store?.bio || "",
+        acceptanceWindowMinutes: String(store?.acceptanceWindowMinutes ?? 120),
       });
       setSaved(true);
       onChange();
@@ -87,98 +149,172 @@ function StoreSection({ store, onChange, user, refreshUser }) {
     await refreshUser?.();
   };
 
+  const bioCount = (store?.bio || "").length;
+
   return (
-    <Panel
-      title="Store Identity & Preferences"
-      subtitle="Configure how your shop appears to buyers across Stall Wise."
-      testId="store-panel"
-      action={
-        store?.slug ? (
-          <Link
-            to={`/${store.slug}`}
-            target="_blank"
-            data-testid="store-shop-link"
-            className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs font-bold text-neutral-800 transition-all hover:bg-neutral-100 hover:border-neutral-300"
-          >
-            <span>Preview Storefront</span>
-            <ExternalLink className="h-3.5 w-3.5 text-neutral-500" />
-          </Link>
-        ) : null
-      }
-    >
-      <div className="space-y-6">
-        {/* Profile Photo Upload */}
-        <div className="flex flex-col sm:flex-row sm:items-center gap-5 rounded-2xl border border-neutral-100 bg-neutral-50/50 p-5">
-          <div className="relative shrink-0">
-            <ImageUpload
-              value={user?.avatar}
-              onChange={setAvatar}
-              kind="avatar"
-              shape="round"
-              label="Upload logo"
-              testId="store-avatar"
-            />
-          </div>
-          <div>
-            <h4 className="text-sm font-bold text-[#0A0A0A]">Store Brand & Logo</h4>
-            <p className="mt-1 text-xs text-neutral-500 max-w-md">
-              Square image recommended (300×300px). This will appear on your shop banner, customer receipts, and product cards.
-            </p>
+    <div className="space-y-5" data-testid="store-panel">
+      {/* ---------- Profile header ---------- */}
+      <section className="overflow-hidden rounded-2xl border border-neutral-200/90 bg-white shadow-2xs">
+        <div className="h-20 bg-gradient-to-r from-[#FF4F00] via-orange-500 to-amber-400" />
+        <div className="px-5 pb-5 sm:px-6">
+          <div className="-mt-10 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div className="flex items-end gap-4">
+              <div className="h-20 w-20 shrink-0 overflow-hidden rounded-2xl border-4 border-white bg-neutral-100 shadow-sm">
+                {user?.avatar ? (
+                  <img src={fileUrl(user.avatar)} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center bg-neutral-900 text-lg font-black text-white">
+                    {(store?.name || "SW").slice(0, 2).toUpperCase()}
+                  </div>
+                )}
+              </div>
+              <div className="min-w-0 pb-1">
+                <h2 className="mk-head truncate text-xl font-black tracking-tight text-[#0A0A0A]">
+                  {store?.name || "My Store"}
+                </h2>
+                <button
+                  type="button"
+                  onClick={copyHandle}
+                  className="mt-0.5 inline-flex items-center gap-1.5 font-mono text-xs text-neutral-500 transition-colors hover:text-[#FF4F00]"
+                  title="Copy storefront link"
+                >
+                  stallwise.in/<span className="font-bold text-[#FF4F00]">{store?.slug}</span>
+                  {copied ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}
+                </button>
+              </div>
+            </div>
+            {store?.slug && (
+              <Link
+                to={`/${store.slug}`}
+                target="_blank"
+                data-testid="store-shop-link"
+                className="inline-flex shrink-0 items-center gap-1.5 self-start rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-bold text-neutral-800 transition-all hover:border-neutral-300 hover:bg-neutral-50 sm:self-auto"
+              >
+                View storefront <ExternalLink className="h-3.5 w-3.5 text-neutral-500" />
+              </Link>
+            )}
           </div>
         </div>
+      </section>
 
-        {/* Inputs */}
-        <div className="grid gap-5 sm:grid-cols-2">
+      {/* ---------- Brand ---------- */}
+      <SettingsCard
+        title="Brand"
+        description="Your logo appears on the storefront, product cards and buyer receipts."
+      >
+        <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
+          <ImageUpload
+            value={user?.avatar}
+            onChange={setAvatar}
+            kind="avatar"
+            shape="round"
+            label="Upload logo"
+            testId="store-avatar"
+          />
+          <p className="max-w-sm text-xs leading-relaxed text-neutral-500">
+            Square image, 300×300px or larger. PNG or JPG.
+          </p>
+        </div>
+      </SettingsCard>
+
+      {/* ---------- Storefront ---------- */}
+      <SettingsCard
+        title="Storefront"
+        description="What buyers read when they land on your shop."
+      >
+        <div className="space-y-5">
           <Field
-            label="Store Name"
+            label="Store name"
             data-testid="store-name-edit"
             value={store?.name || ""}
             placeholder="e.g. Studio Craft Ceramics"
             onChange={(e) => onChange({ ...store, name: e.target.value }, true)}
-            helper="Your public brand name"
+            helper="Shown as your shop's heading."
           />
+
+          <div>
+            <div className="mb-1.5 flex items-baseline justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-neutral-600">Bio</span>
+              <span className={`text-[11px] ${bioCount > 500 ? "text-rose-600" : "text-neutral-400"}`}>
+                {bioCount}/500
+              </span>
+            </div>
+            <textarea
+              data-testid="store-bio-edit"
+              rows={4}
+              maxLength={500}
+              placeholder="What makes your products special, packaging, shipping timelines…"
+              value={store?.bio || ""}
+              onChange={(e) => onChange({ ...store, bio: e.target.value }, true)}
+              className="w-full rounded-xl border border-neutral-200 bg-white p-3.5 text-sm text-[#0A0A0A] outline-none transition-all placeholder:text-neutral-400 focus:border-[#FF4F00] focus:ring-2 focus:ring-[#FF4F00]/10"
+            />
+          </div>
+
+          <div className="rounded-xl border border-neutral-200 bg-neutral-50/60 p-3.5">
+            <span className="text-xs font-bold uppercase tracking-wider text-neutral-400">Shop handle</span>
+            <p className="mt-1 font-mono text-sm font-bold text-[#0A0A0A]">stallwise.in/{store?.slug}</p>
+            <p className="mt-1 text-xs text-neutral-500">
+              Your handle is permanent — it keeps existing links and QR codes working.
+            </p>
+          </div>
+        </div>
+      </SettingsCard>
+
+      {/* ---------- Fulfilment ---------- */}
+      <SettingsCard
+        title="Fulfilment"
+        description="How long buyers have to raise a dispute after you confirm delivery."
+      >
+        <div className="sm:max-w-xs">
           <Field
-            label="Delivery Acceptance Window (Minutes)"
+            label="Acceptance window (minutes)"
             data-testid="store-window-edit"
             type="number"
+            min="1"
             value={store?.acceptanceWindowMinutes ?? 120}
             onChange={(e) => onChange({ ...store, acceptanceWindowMinutes: e.target.value }, true)}
-            helper="Time allocated for delivery confirmation after shipping (Default: 120 min)"
+            helper="Default 120. The order completes automatically once it passes."
           />
         </div>
+      </SettingsCard>
 
-        <div>
-          <span className="text-xs font-bold uppercase tracking-wider text-neutral-600 mb-1.5 block">
-            Store Bio / Description
-          </span>
-          <textarea
-            data-testid="store-bio-edit"
-            rows={3}
-            placeholder="Tell buyers what makes your products special, packaging details, or shipping policies..."
-            value={store?.bio || ""}
-            onChange={(e) => onChange({ ...store, bio: e.target.value }, true)}
-            className="w-full rounded-xl border border-neutral-200 bg-white p-3.5 text-sm text-[#0A0A0A] outline-none transition-all placeholder:text-neutral-400 focus:border-[#FF4F00] focus:ring-2 focus:ring-[#FF4F00]/10"
-          />
-        </div>
+      {err && <Note tone="error">{err}</Note>}
 
-        <div className="flex items-center gap-3 pt-2">
-          <Btn variant="primary" data-testid="store-save-btn" onClick={save} disabled={busy}>
-            {busy ? "Saving..." : "Save Store Changes"}
-          </Btn>
-          {saved && (
-            <motion.span
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 border border-emerald-200 px-3 py-1 text-xs font-bold text-emerald-700"
-            >
-              <Check className="h-3.5 w-3.5" /> Changes saved successfully!
-            </motion.span>
-          )}
-        </div>
-
-        {err && <Note tone="error">{err}</Note>}
-      </div>
-    </Panel>
+      {/* ---------- Sticky save bar ---------- */}
+      <AnimatePresence>
+        {(dirty || saved) && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 12 }}
+            className="sticky bottom-4 z-30 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-800 bg-neutral-900 px-4 py-3 shadow-lg"
+          >
+            {saved && !dirty ? (
+              <span className="inline-flex items-center gap-2 text-sm font-bold text-emerald-300">
+                <Check className="h-4 w-4" /> Changes saved
+              </span>
+            ) : (
+              <>
+                <span className="text-sm font-bold text-white">You have unsaved changes</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={discard}
+                    disabled={busy}
+                    className="rounded-xl px-3 py-2 text-xs font-bold text-neutral-300 transition-colors hover:text-white disabled:opacity-50"
+                  >
+                    Discard
+                  </button>
+                  <Btn variant="primary" data-testid="store-save-btn" onClick={save} disabled={busy}>
+                    {busy ? "Saving…" : "Save changes"}
+                  </Btn>
+                </div>
+              </>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
@@ -188,37 +324,48 @@ function StoreSection({ store, onChange, user, refreshUser }) {
 function AccountSection({ user, onLogout }) {
   const joined = (() => {
     try {
-      return user?.created_at ? new Date(user.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : null;
+      return user?.created_at
+        ? new Date(user.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+        : null;
     } catch {
       return null;
     }
   })();
 
   return (
-    <Panel title="Account" subtitle="Your Stall Wise login and session." testId="account-panel">
-      <div className="space-y-5">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="rounded-xl border border-neutral-200 bg-neutral-50/60 p-4">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-400">Email</span>
-            <p className="mt-1 text-sm font-bold text-[#0A0A0A] break-all">{user?.email || "—"}</p>
-          </div>
-          <div className="rounded-xl border border-neutral-200 bg-neutral-50/60 p-4">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-400">Sign-in method</span>
-            <p className="mt-1 text-sm font-bold text-[#0A0A0A] capitalize">
-              {user?.authProvider === "google" ? "Google" : "Email & password"}
-            </p>
-          </div>
-        </div>
-        {joined && (
-          <p className="text-xs text-neutral-500">Member since {joined}.</p>
-        )}
-        <div className="border-t border-neutral-100 pt-4">
+    <SettingsCard
+      title="Account"
+      description="The login attached to this store."
+      testId="account-panel"
+      footer={
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <span className="text-xs text-neutral-500">Signing out won't affect your live storefront.</span>
           <Btn variant="danger" data-testid="account-logout-btn" onClick={onLogout}>
             <LogOut className="h-4 w-4" /> Log out
           </Btn>
         </div>
+      }
+    >
+      <div>
+        <InfoRow label="Email" value={user?.email || "—"} />
+        <InfoRow
+          label="Sign-in"
+          value={user?.authProvider === "google" ? "Google" : "Email & password"}
+        />
+        {joined && <InfoRow label="Member since" value={joined} />}
+        <InfoRow label="Plan">
+          <span
+            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-bold ${
+              user?.subscriptionStatus === "active"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : "border-neutral-200 bg-neutral-100 text-neutral-600"
+            }`}
+          >
+            {user?.subscriptionStatus === "active" ? <><Sparkles className="h-3 w-3" /> Pro</> : "Free"}
+          </span>
+        </InfoRow>
       </div>
-    </Panel>
+    </SettingsCard>
   );
 }
 
@@ -1841,7 +1988,7 @@ export default function Dashboard() {
 
           {/* TAB 5: SETTINGS */}
           {activeTab === "settings" && (
-            <div className="space-y-8">
+            <div className="space-y-5">
               {store && (
                 <StoreSection
                   store={store}
