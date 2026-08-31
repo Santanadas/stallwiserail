@@ -197,6 +197,8 @@ def _init_sqlite_schema(conn: sqlite3.Connection):
         account_number_enc TEXT,
         account_number_last4 TEXT,
         ifsc TEXT,
+        product_config_id TEXT,
+        settlement_status TEXT,
         updated_at TEXT NOT NULL
     );
 
@@ -215,7 +217,41 @@ def _init_sqlite_schema(conn: sqlite3.Connection):
         plan_id TEXT NOT NULL
     );
     """)
+    _sqlite_migrate(c)
     conn.commit()
+
+
+# Additive column migrations for databases created by an older schema version.
+_COLUMN_MIGRATIONS: Dict[str, Dict[str, str]] = {
+    "seller_routes": {
+        "product_config_id": "TEXT",
+        "settlement_status": "TEXT",
+    },
+}
+
+
+def _sqlite_migrate(c: sqlite3.Cursor):
+    for table, cols in _COLUMN_MIGRATIONS.items():
+        try:
+            existing = {row[1] for row in c.execute(f"PRAGMA table_info({table})").fetchall()}
+        except Exception:
+            continue
+        for name, ddl in cols.items():
+            if name not in existing:
+                try:
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+                except Exception as e:
+                    logger.warning(f"sqlite migrate {table}.{name}: {e}")
+
+
+async def _pg_migrate(pool: asyncpg.Pool):
+    async with pool.acquire() as conn:
+        for table, cols in _COLUMN_MIGRATIONS.items():
+            for name, ddl in cols.items():
+                try:
+                    await conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {ddl}")
+                except Exception as e:
+                    logger.warning(f"pg migrate {table}.{name}: {e}")
 
 
 def _get_sqlite_conn() -> sqlite3.Connection:
@@ -290,6 +326,7 @@ async def init_db():
                 
                 _pool = pool
                 _ENGINE = "postgres"
+                await _pg_migrate(pool)
                 logger.info(f"Connected to PostgreSQL database at {hostname}")
                 return _pool
         except Exception as e:

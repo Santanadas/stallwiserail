@@ -184,6 +184,9 @@ function StoreSection({ store, onChange, user, refreshUser }) {
 /* ==========================================================================
    PAYMENT ROUTE & SETTLEMENT SECTION
    ========================================================================== */
+const IFSC_RE = /^[A-Za-z]{4}0[A-Za-z0-9]{6}$/;
+const ACCT_RE = /^\d{6,18}$/;
+
 function RouteSection({ onChange }) {
   const [route, setRoute] = useState(null);
   const [form, setForm] = useState({
@@ -195,13 +198,15 @@ function RouteSection({ onChange }) {
     ifsc: "",
   });
   const [msg, setMsg] = useState("");
+  const [msgTone, setMsgTone] = useState("error");
   const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const upd = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
   const load = useCallback(async () => {
     try {
       const { data } = await api.get("/seller/route");
-      setRoute(data);
+      setRoute(data?.connected ? data : null);
     } catch {}
   }, []);
 
@@ -209,12 +214,39 @@ function RouteSection({ onChange }) {
     load();
   }, [load]);
 
+  const validate = () => {
+    if (!form.legal_business_name.trim()) return "Enter your legal / registered name.";
+    if (!form.contact_name.trim()) return "Enter the primary contact name.";
+    if (!/^\d{8,15}$/.test(form.phone.replace(/\D/g, ""))) return "Enter a valid phone number.";
+    if (!form.beneficiary_name.trim()) return "Enter the bank account holder's name.";
+    if (!ACCT_RE.test(form.account_number.trim())) return "Bank account number must be 6–18 digits.";
+    if (!IFSC_RE.test(form.ifsc.trim())) return "That IFSC code doesn't look valid (e.g. HDFC0001234).";
+    return null;
+  };
+
   const connect = async () => {
     setMsg("");
+    const err = validate();
+    if (err) {
+      setMsgTone("error");
+      setMsg(err);
+      return;
+    }
     setBusy(true);
     try {
-      await api.post("/seller/route/onboard", form);
-      setMsg("Bank payout account connected successfully! Customer payments settle directly to your account.");
+      const payload = {
+        ...form,
+        phone: form.phone.replace(/\D/g, ""),
+        ifsc: form.ifsc.trim().toUpperCase(),
+        account_number: form.account_number.trim(),
+      };
+      const { data } = await api.post("/seller/route/onboard", payload);
+      setMsgTone("success");
+      setMsg(
+        data?.payoutsLive
+          ? "Bank account linked. Razorpay is verifying it — payouts activate once verification completes."
+          : "Bank details saved. Direct payouts will switch on once Razorpay Route finishes verification."
+      );
       setForm({
         legal_business_name: "",
         contact_name: "",
@@ -223,22 +255,42 @@ function RouteSection({ onChange }) {
         account_number: "",
         ifsc: "",
       });
-      load();
+      setRoute(data?.connected ? data : null);
       onChange();
     } catch (e) {
+      setMsgTone("error");
       setMsg(formatApiError(e.response?.data?.detail));
     } finally {
       setBusy(false);
     }
   };
 
+  const refresh = async () => {
+    setRefreshing(true);
+    setMsg("");
+    try {
+      const { data } = await api.post("/seller/route/refresh");
+      setRoute(data?.connected ? data : null);
+    } catch (e) {
+      setMsgTone("error");
+      setMsg(formatApiError(e.response?.data?.detail));
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const disconnect = async () => {
-    if (confirm("Disconnect direct bank payouts?")) {
+    if (confirm("Disconnect direct bank payouts? New orders will settle to the platform until you reconnect.")) {
       await api.delete("/seller/route");
-      load();
+      setRoute(null);
       onChange();
     }
   };
+
+  const live = route?.payoutsLive;
+  const settlementReady = ["activated", "active", "configured"].includes(
+    String(route?.settlementStatus || "").toLowerCase()
+  );
 
   return (
     <Panel
@@ -249,15 +301,22 @@ function RouteSection({ onChange }) {
         <span
           data-testid="route-status"
           className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-wider ${
-            route?.connected
+            route?.connected && settlementReady
               ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+              : route?.connected
+              ? "bg-amber-50 border-amber-200 text-amber-700"
               : "bg-neutral-100 border-neutral-200 text-neutral-600"
           }`}
         >
-          {route?.connected ? (
+          {route?.connected && settlementReady ? (
             <>
               <ShieldCheck className="h-4 w-4 text-emerald-600" />
-              <span>Settlement Active</span>
+              <span>Payouts Active</span>
+            </>
+          ) : route?.connected ? (
+            <>
+              <Clock className="h-4 w-4 text-amber-600" />
+              <span>Verifying</span>
             </>
           ) : (
             <>
@@ -277,7 +336,7 @@ function RouteSection({ onChange }) {
           <div>
             <h4 className="font-bold text-[#0A0A0A] text-sm">Automated Direct Bank Settlements</h4>
             <p className="mt-1 text-xs leading-relaxed text-neutral-600">
-              Stall Wise is powered by Razorpay Route. When a customer purchases from your store, payouts are settled directly into your linked bank account based on your store's active plan. No holding periods, no manual withdrawal requests.
+              Stall Wise is powered by Razorpay Route. When a customer pays, your share of the order is transferred straight to this linked bank account — no holding periods, no manual withdrawal requests. Razorpay runs its own bank-account verification before the first payout.
             </p>
           </div>
         </div>
@@ -293,17 +352,34 @@ function RouteSection({ onChange }) {
               {route.bankLast4 && (
                 <div className="rounded-xl bg-white p-4 border border-neutral-100 shadow-2xs">
                   <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-400">Bank Account</span>
-                  <p className="mt-1 font-mono text-sm font-bold text-[#0A0A0A]">Ending in ••••{route.bankLast4}</p>
+                  <p className="mt-1 font-mono text-sm font-bold text-[#0A0A0A]">••••{route.bankLast4}</p>
+                  {route.ifsc && <p className="mt-0.5 font-mono text-[11px] text-neutral-500">{route.ifsc}</p>}
                 </div>
               )}
 
               <div className="rounded-xl bg-white p-4 border border-neutral-100 shadow-2xs">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-400">Account Status</span>
-                <p className="mt-1 font-bold text-emerald-600 capitalize text-sm">{route.status || "Verified"}</p>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-400">Settlement Status</span>
+                <p className={`mt-1 font-bold capitalize text-sm ${settlementReady ? "text-emerald-600" : "text-amber-600"}`}>
+                  {(route.settlementStatus || route.status || "pending").replace(/_/g, " ")}
+                </p>
               </div>
             </div>
 
-            <div className="mt-5 flex justify-end">
+            {!live && (
+              <Note tone="warning" className="mt-4">
+                Running in fallback mode — Razorpay Route did not accept this account yet. Until it does, orders settle to the platform and are paid out manually.
+              </Note>
+            )}
+            {live && !settlementReady && (
+              <Note tone="info" className="mt-4">
+                Razorpay is verifying your bank account. This usually takes a few minutes to a couple of hours. Use “Refresh status” to check.
+              </Note>
+            )}
+
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <Btn variant="ghost" data-testid="route-refresh-btn" onClick={refresh} disabled={refreshing}>
+                {refreshing ? "Checking…" : "Refresh status"}
+              </Btn>
               <Btn variant="danger" data-testid="route-disconnect-btn" onClick={disconnect}>
                 Disconnect Account
               </Btn>
@@ -314,7 +390,7 @@ function RouteSection({ onChange }) {
             <h4 className="font-bold text-[#0A0A0A] text-sm mb-4">Enter Bank Account Details</h4>
             <div className="grid gap-4 sm:grid-cols-2">
               <Field
-                label="Legal / Registered Business Name"
+                label="Legal / Registered Name"
                 data-testid="route-legal"
                 placeholder="e.g. Studio Craft Enterprises"
                 value={form.legal_business_name}
@@ -337,14 +413,15 @@ function RouteSection({ onChange }) {
               <Field
                 label="Beneficiary / Account Holder Name"
                 data-testid="route-beneficiary"
-                placeholder="Name as it appears on bank passbook"
+                placeholder="Name as printed on the bank passbook"
                 value={form.beneficiary_name}
                 onChange={upd("beneficiary_name")}
               />
               <Field
                 label="Bank Account Number"
                 data-testid="route-account"
-                placeholder="Enter account number"
+                placeholder="Digits only"
+                inputMode="numeric"
                 value={form.account_number}
                 onChange={upd("account_number")}
               />
@@ -354,6 +431,7 @@ function RouteSection({ onChange }) {
                 placeholder="e.g. HDFC0001234"
                 value={form.ifsc}
                 onChange={upd("ifsc")}
+                helper="11 characters — 4 letters, a 0, then 6 digits/letters."
               />
             </div>
             <div className="mt-6 flex justify-end">
@@ -364,11 +442,7 @@ function RouteSection({ onChange }) {
           </div>
         )}
 
-        {msg && (
-          <Note tone={msg.toLowerCase().includes("connected") || msg.toLowerCase().includes("success") ? "success" : "error"}>
-            {msg}
-          </Note>
-        )}
+        {msg && <Note tone={msgTone}>{msg}</Note>}
       </div>
     </Panel>
   );

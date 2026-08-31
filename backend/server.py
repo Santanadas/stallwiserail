@@ -783,8 +783,11 @@ def _route_public(route: dict) -> dict:
         "connected": True,
         "mode": route.get("mode"),
         "status": route.get("status"),
+        "settlementStatus": route.get("settlement_status"),
+        "payoutsLive": route.get("mode") == "razorpay",
         "accountIdLast4": (route.get("account_id") or "")[-4:],
         "beneficiaryName": route.get("beneficiary_name"),
+        "ifsc": route.get("ifsc"),
         "bankLast4": route.get("account_number_last4") or ((route.get("account_number") or "")[-4:] if route.get("account_number") else None),
     }
 
@@ -799,32 +802,43 @@ async def route_onboard(body: RouteOnboardIn, user=Depends(get_current_user)):
     clean_phone = security.sanitize_text(body.phone, 15)
     clean_beneficiary = security.sanitize_text(body.beneficiary_name, 200)
     clean_ifsc = security.sanitize_text(body.ifsc, 11).upper()
-    bank_last4 = body.account_number.strip()[-4:] if body.account_number and len(body.account_number.strip()) >= 4 else None
+    clean_account = security.sanitize_text(body.account_number, 34).strip()
+    bank_last4 = clean_account[-4:] if len(clean_account) >= 4 else None
+
+    if not clean_account or not clean_ifsc or not clean_beneficiary:
+        raise HTTPException(status_code=400, detail="Beneficiary name, account number and IFSC are all required for direct payouts")
+    if not re.match(r"^[A-Z]{4}0[A-Z0-9]{6}$", clean_ifsc):
+        raise HTTPException(status_code=400, detail="That IFSC code doesn't look valid (e.g. HDFC0001234)")
+    if not re.match(r"^\d{6,18}$", clean_account):
+        raise HTTPException(status_code=400, detail="Bank account number must be 6–18 digits")
 
     payload = {
-        "email": user["email"], "phone": clean_phone, "type": "route",
+        "email": user["email"], "phone": clean_phone,
         "reference_id": store["slug"], "legal_business_name": clean_legal,
         "business_type": body.business_type, "contact_name": clean_contact,
-        "profile": {"category": "ecommerce", "subcategory": "online_marketplace"},
+        "beneficiary_name": clean_beneficiary, "account_number": clean_account, "ifsc": clean_ifsc,
+        "profile": {"category": "ecommerce", "subcategory": "marketplace"},
     }
     result = await asyncio.to_thread(route_service.create_linked_account, payload)
-    
-    account_number_enc = security.encrypt_secret(body.account_number.strip()) if body.account_number else None
+
+    account_number_enc = security.encrypt_secret(clean_account) if clean_account else None
     updated_at = iso(now())
 
     await db.execute(
         """
-        INSERT INTO seller_routes (seller_id, store_slug, account_id, mode, status, legal_business_name, contact_name, phone, beneficiary_name, account_number_enc, account_number_last4, ifsc, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        INSERT INTO seller_routes (seller_id, store_slug, account_id, mode, status, legal_business_name, contact_name, phone, beneficiary_name, account_number_enc, account_number_last4, ifsc, product_config_id, settlement_status, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         ON CONFLICT (seller_id) DO UPDATE SET
             store_slug = EXCLUDED.store_slug, account_id = EXCLUDED.account_id, mode = EXCLUDED.mode,
             status = EXCLUDED.status, legal_business_name = EXCLUDED.legal_business_name,
             contact_name = EXCLUDED.contact_name, phone = EXCLUDED.phone, beneficiary_name = EXCLUDED.beneficiary_name,
             account_number_enc = EXCLUDED.account_number_enc, account_number_last4 = EXCLUDED.account_number_last4,
-            ifsc = EXCLUDED.ifsc, updated_at = EXCLUDED.updated_at
+            ifsc = EXCLUDED.ifsc, product_config_id = EXCLUDED.product_config_id,
+            settlement_status = EXCLUDED.settlement_status, updated_at = EXCLUDED.updated_at
         """,
         user["user_id"], store["slug"], result["account_id"], result["mode"], result["status"],
-        clean_legal, clean_contact, clean_phone, clean_beneficiary, account_number_enc, bank_last4, clean_ifsc, updated_at
+        clean_legal, clean_contact, clean_phone, clean_beneficiary, account_number_enc, bank_last4, clean_ifsc,
+        result.get("product_config_id"), result.get("settlement_status"), updated_at
     )
     saved = await db.fetch_one("SELECT * FROM seller_routes WHERE seller_id = $1", user["user_id"])
     return _route_public(saved)
@@ -835,6 +849,25 @@ async def get_route(user=Depends(get_current_user)):
     route = await db.fetch_one("SELECT * FROM seller_routes WHERE seller_id = $1", user["user_id"])
     if not route:
         return {"connected": False}
+    return _route_public(route)
+
+
+@api.post("/seller/route/refresh")
+async def refresh_route(user=Depends(get_current_user)):
+    route = await db.fetch_one("SELECT * FROM seller_routes WHERE seller_id = $1", user["user_id"])
+    if not route:
+        raise HTTPException(status_code=404, detail="No payout account connected")
+    fresh = await asyncio.to_thread(
+        route_service.fetch_account_status, route.get("account_id"), route.get("product_config_id")
+    )
+    if fresh:
+        await db.execute(
+            "UPDATE seller_routes SET status = $1, settlement_status = $2, updated_at = $3 WHERE seller_id = $4",
+            fresh.get("status") or route.get("status"),
+            fresh.get("settlement_status") or route.get("settlement_status"),
+            iso(now()), user["user_id"],
+        )
+        route = await db.fetch_one("SELECT * FROM seller_routes WHERE seller_id = $1", user["user_id"])
     return _route_public(route)
 
 
