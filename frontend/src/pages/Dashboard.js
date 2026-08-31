@@ -966,7 +966,14 @@ function OrdersSection() {
                     <td className="px-5 py-3.5 text-xs text-neutral-600">
                       {(o.items || []).length} item{(o.items || []).length > 1 ? "s" : ""}
                     </td>
-                    <td className="px-5 py-3.5 font-bold text-[#0A0A0A]">₹{o.amount}</td>
+                    <td className="px-5 py-3.5">
+                      <span className="font-bold text-[#0A0A0A]">₹{o.amount}</span>
+                      {o.paymentMethod === "cod" && (
+                        <span className="ml-2 rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                          COD
+                        </span>
+                      )}
+                    </td>
                     <td className="px-5 py-3.5">
                       <StatusPill status={o.status} data-testid={`order-status-${o.order_id}`} />
                     </td>

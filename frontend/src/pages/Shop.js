@@ -21,6 +21,7 @@ export default function Shop() {
   const [placing, setPlacing] = useState(false);
   const [copied, setCopied] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
+  const [payMethod, setPayMethod] = useState("online");
 
   const load = useCallback(async () => {
     try {
@@ -71,7 +72,14 @@ export default function Shop() {
       if (opt && opt.stock === 0) { setErr(`${g.name} ${opt.label} is out of stock`); return; }
     }
     setErr("");
-    setCart([...cart, { productId: p.product_id, title: p.title, quantity: 1, optionSelections: sel, unitPrice: unitPrice(p) }]);
+    setCart([...cart, {
+      productId: p.product_id,
+      title: p.title,
+      quantity: 1,
+      optionSelections: sel,
+      unitPrice: unitPrice(p),
+      paymentMethods: (p.paymentMethods && p.paymentMethods.length) ? p.paymentMethods : ["online"],
+    }]);
     setCartOpen(true);
   };
 
@@ -81,6 +89,18 @@ export default function Shop() {
     setCart(cart.map((c, idx) => (idx === i ? { ...c, quantity: Math.min(q, 999) } : c)));
   };
   const cartTotal = cart.reduce((s, c) => s + (c.unitPrice || 0) * c.quantity, 0);
+
+  // A payment method is offered only if every item in the cart accepts it.
+  const allowedPayments = cart.reduce(
+    (acc, c) => acc.filter((m) => (c.paymentMethods || ["online"]).includes(m)),
+    ["online", "cod"]
+  );
+
+  useEffect(() => {
+    if (allowedPayments.length && !allowedPayments.includes(payMethod)) {
+      setPayMethod(allowedPayments[0]);
+    }
+  }, [allowedPayments, payMethod]);
 
   const isSoldOut = (p) => {
     if (p.stock === 0) return true;
@@ -108,13 +128,15 @@ export default function Shop() {
         buyerName: buyer.buyerName.trim(),
         buyerEmail: email,
         buyerPhone: buyer.buyerPhone.replace(/\D/g, ""),
+        paymentMethod: payMethod,
         items: cart.map((c) => ({ productId: c.productId, quantity: c.quantity, optionSelections: c.optionSelections })),
       });
 
       const orderId = data.orderId;
       const goToOrder = () => navigate(`/order/${orderId}?email=${encodeURIComponent(email)}`);
 
-      if (!data.razorpayOrderId) {
+      // Cash on delivery: nothing to charge now — the seller collects at handover.
+      if (payMethod === "cod" || !data.razorpayOrderId) {
         goToOrder();
         return;
       }
@@ -311,6 +333,11 @@ export default function Shop() {
                       <span className="mk-head shrink-0 text-lg font-black tracking-tighter">₹{unitPrice(p)}</span>
                     </div>
                     {p.description && <p className="mt-2 text-sm leading-relaxed text-[#525252]">{p.description}</p>}
+                    {(p.paymentMethods || []).includes("cod") && (
+                      <span className="mt-2 inline-block w-fit border border-[#0A0A0A] bg-[#FFF4E0] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">
+                        Cash on delivery
+                      </span>
+                    )}
                     {p.stock != null && (p.optionGroups || []).length === 0 && (
                       <span data-testid={`stock-${p.product_id}`} className={`mt-2 text-xs font-bold uppercase tracking-wider ${p.stock === 0 ? "text-[#8A2200]" : "text-[#0B5227]"}`}>
                         {p.stock === 0 ? "Out of stock" : `${p.stock} in stock`}
@@ -384,6 +411,9 @@ export default function Shop() {
         checkout={checkout}
         placing={placing}
         err={err}
+        allowedPayments={allowedPayments}
+        payMethod={payMethod}
+        setPayMethod={setPayMethod}
       />
     </div>
   );

@@ -34,6 +34,9 @@ PREMIUM_TIER = "Stall Wise Pro"
 FREE_TIER = "Free Plan"
 COMMISSION_RATE_FREE = 0.10
 COMMISSION_RATE_PRO = 0.10
+# "online" = Razorpay checkout (UPI, cards, netbanking, wallets).
+# "cod"    = cash collected by the seller on delivery.
+PAYMENT_METHODS = ("online", "cod")
 DEFAULT_WINDOW_MIN = 120
 OTP_EXPIRY_MIN = 4320  # 3 days
 OTP_MAX_ATTEMPTS = 5
@@ -148,6 +151,7 @@ class ProductIn(BaseModel):
     active: bool = True
     image: Optional[str] = Field(default=None, max_length=500)
     images: List[str] = Field(default_factory=list, max_length=8)
+    paymentMethods: List[str] = Field(default_factory=lambda: ["online"], max_length=4)
 
 
 class OrderItemIn(BaseModel):
@@ -163,6 +167,7 @@ class OrderIn(BaseModel):
     buyerEmail: EmailStr
     buyerPhone: str = Field(min_length=8, max_length=15)
     address: Dict[str, Any] = Field(default_factory=dict)
+    paymentMethod: str = Field(default="online", max_length=16)
 
 
 class OtpIn(BaseModel):
@@ -262,6 +267,13 @@ def public_product(p: Optional[dict]) -> Optional[dict]:
             imgs = []
     if not imgs and p.get("image"):
         imgs = [p["image"]]
+    pays = p.get("payment_methods", p.get("paymentMethods"))
+    if isinstance(pays, str):
+        try:
+            pays = json.loads(pays)
+        except Exception:
+            pays = None
+    pays = [m for m in (pays or []) if m in PAYMENT_METHODS] or ["online"]
     return {
         "product_id": p["product_id"],
         "sellerId": p.get("seller_id") or p.get("sellerId"),
@@ -274,6 +286,7 @@ def public_product(p: Optional[dict]) -> Optional[dict]:
         "active": bool(p.get("active", True)),
         "image": (imgs[0] if imgs else p.get("image")),
         "images": imgs or [],
+        "paymentMethods": pays,
         "created_at": p["created_at"],
     }
 
@@ -308,6 +321,7 @@ def public_order(o: Optional[dict], for_buyer: bool = False) -> Optional[dict]:
         "tax": float(o.get("tax", 0)),
         "amount": float(o.get("amount", 0)),
         "status": o["status"],
+        "paymentMethod": (o.get("payment_method") or o.get("paymentMethod") or "online"),
         "razorpayOrderId": o.get("razorpay_order_id") or o.get("razorpayOrderId"),
         "razorpayPaymentId": o.get("razorpay_payment_id") or o.get("razorpayPaymentId"),
         "razorpayKeyId": o.get("razorpay_key_id") or o.get("razorpayKeyId"),
@@ -954,6 +968,14 @@ def _clean_product_images(body: "ProductIn") -> List[str]:
     return out[:8]
 
 
+def _clean_payment_methods(body: "ProductIn") -> List[str]:
+    """Keep the seller's selection in a stable order and never allow an empty
+    set — a product with no payment method could not be bought."""
+    chosen = {m.strip().lower() for m in (body.paymentMethods or [])}
+    out = [m for m in PAYMENT_METHODS if m in chosen]
+    return out or ["online"]
+
+
 @api.post("/products")
 async def create_product(body: ProductIn, user=Depends(get_current_user)):
     store = await get_my_store(user)
@@ -962,6 +984,7 @@ async def create_product(body: ProductIn, user=Depends(get_current_user)):
 
     images = _clean_product_images(body)
     primary = images[0] if images else None
+    pay_methods = _clean_payment_methods(body)
     prod_id = new_id("prod")
     title = security.sanitize_text(body.title, 200)
     desc = security.sanitize_text(body.description, 2000)
@@ -970,17 +993,18 @@ async def create_product(body: ProductIn, user=Depends(get_current_user)):
 
     await db.execute(
         """
-        INSERT INTO products (product_id, seller_id, store_slug, title, description, price, stock, option_groups, active, image, images, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        INSERT INTO products (product_id, seller_id, store_slug, title, description, price, stock, option_groups, active, image, images, payment_methods, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         """,
         prod_id, user["user_id"], store["slug"], title, desc, body.price, body.stock,
-        option_groups_json, body.active, primary, images, created_at
+        option_groups_json, body.active, primary, images, pay_methods, created_at
     )
     return {
         "product_id": prod_id, "sellerId": user["user_id"], "storeSlug": store["slug"],
         "title": title, "description": desc, "price": body.price, "stock": body.stock,
         "optionGroups": option_groups_json, "active": body.active,
-        "image": primary, "images": images, "created_at": created_at,
+        "image": primary, "images": images, "paymentMethods": pay_methods,
+        "created_at": created_at,
     }
 
 
@@ -998,6 +1022,7 @@ async def update_product(product_id: str, body: ProductIn, user=Depends(get_curr
 
     images = _clean_product_images(body)
     primary = images[0] if images else None
+    pay_methods = _clean_payment_methods(body)
     title = security.sanitize_text(body.title, 200)
     desc = security.sanitize_text(body.description, 2000)
     option_groups_json = [og.model_dump() for og in body.optionGroups]
@@ -1005,10 +1030,10 @@ async def update_product(product_id: str, body: ProductIn, user=Depends(get_curr
     await db.execute(
         """
         UPDATE products
-        SET title = $1, description = $2, price = $3, stock = $4, option_groups = $5, active = $6, image = $7, images = $8
-        WHERE product_id = $9 AND seller_id = $10
+        SET title = $1, description = $2, price = $3, stock = $4, option_groups = $5, active = $6, image = $7, images = $8, payment_methods = $9
+        WHERE product_id = $10 AND seller_id = $11
         """,
-        title, desc, body.price, body.stock, option_groups_json, body.active, primary, images, product_id, user["user_id"]
+        title, desc, body.price, body.stock, option_groups_json, body.active, primary, images, pay_methods, product_id, user["user_id"]
     )
     updated = await db.fetch_one("SELECT * FROM products WHERE product_id = $1", product_id)
     return public_product(updated)
@@ -1032,6 +1057,45 @@ async def finalize_if_expired(order: dict) -> dict:
             await db.execute("UPDATE orders SET status = 'completed' WHERE order_id = $1 AND status = 'delivered'", order["order_id"])
             order["status"] = "completed"
     return order
+
+
+async def _record_order(order_id, store, body: OrderIn, items, total, created_at,
+                        rp_order_id, rp_key_id, pay_method: str):
+    await db.execute(
+        """
+        INSERT INTO orders (
+            order_id, seller_id, store_slug, buyer_name, buyer_email, buyer_phone,
+            address, items, subtotal, delivery_fee, tax, amount, status,
+            razorpay_order_id, razorpay_key_id, payment_method, created_at
+        ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'placed', $13, $14, $15, $16
+        )
+        """,
+        order_id, store["seller_id"], store["slug"], body.buyerName, body.buyerEmail, body.buyerPhone,
+        body.address, items, total, 0, 0, total, rp_order_id, rp_key_id, pay_method, created_at
+    )
+
+
+async def _reserve_stock(demand: dict, prod_cache: dict):
+    """Decrement stock, guarded so it can never go negative under a race."""
+    for pid, d in demand.items():
+        if prod_cache[pid].get("stock") is not None:
+            await db.execute(
+                "UPDATE products SET stock = stock - $1 WHERE product_id = $2 AND stock >= $3",
+                d["product_qty"], pid, d["product_qty"]
+            )
+
+
+async def _notify_new_order(store, order_id, total, items, body: OrderIn):
+    seller = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", store["seller_id"])
+    if not seller:
+        return
+    order_doc = {
+        "order_id": order_id, "amount": total, "items": items,
+        "buyerName": body.buyerName, "buyerEmail": body.buyerEmail,
+    }
+    asyncio.create_task(email_service.send_new_order_email(
+        seller["email"], seller.get("name"), order_doc, f"{FRONTEND_URL}/orders/{order_id}"))
 
 
 @api.post("/shop/{slug}/checkout")
@@ -1086,21 +1150,49 @@ async def checkout(slug: str, body: OrderIn, request: Request):
         if stock is not None and d["product_qty"] > stock:
             raise HTTPException(status_code=409, detail=f"Only {stock} left of “{prod['title']}”.")
 
+    # Payment method must be offered by every product in the cart.
+    pay_method = (body.paymentMethod or "online").strip().lower()
+    if pay_method not in PAYMENT_METHODS:
+        raise HTTPException(status_code=400, detail="Unsupported payment method")
+    allowed = set(PAYMENT_METHODS)
+    for prod in prod_cache.values():
+        allowed &= set(prod.get("paymentMethods") or ["online"])
+    if not allowed:
+        raise HTTPException(
+            status_code=400,
+            detail="These items don't share a payment method. Please order them separately.",
+        )
+    if pay_method not in allowed:
+        label = "Cash on delivery" if pay_method == "cod" else "Online payment"
+        raise HTTPException(status_code=400, detail=f"{label} isn't available for every item in this order.")
+
     order_id = new_id("ord")
     created_at = iso(now())
-
-    # Razorpay Real Live Order Creation
-    route = await db.fetch_one("SELECT * FROM seller_routes WHERE seller_id = $1", store["seller_id"])
-    seller = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", store["seller_id"])
-    seller_sub = await effective_sub_status(seller) if seller else "inactive"
-    commission_pct = COMMISSION_RATE_PRO if seller_sub == "active" else COMMISSION_RATE_FREE
-    rc, plat_kid, _ = route_service.platform_client()
-    if not rc:
-        raise HTTPException(status_code=503, detail="Payments are unavailable right now. Please try again shortly.")
 
     amount_paise = int(round(total * 100))
     if amount_paise <= 0:
         raise HTTPException(status_code=400, detail="Order total must be greater than zero")
+
+    route = await db.fetch_one("SELECT * FROM seller_routes WHERE seller_id = $1", store["seller_id"])
+    seller = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", store["seller_id"])
+    seller_sub = await effective_sub_status(seller) if seller else "inactive"
+    commission_pct = COMMISSION_RATE_PRO if seller_sub == "active" else COMMISSION_RATE_FREE
+
+    rp_order_id = None
+    rp_key_id = None
+
+    if pay_method == "cod":
+        # No gateway leg — the seller collects cash at handover.
+        await _record_order(order_id, store, body, items, total, created_at, None, None, "cod")
+        await _reserve_stock(demand, prod_cache)
+        await _notify_new_order(store, order_id, total, items, body)
+        return {"orderId": order_id, "amount": total, "paymentMethod": "cod",
+                "razorpayOrderId": None, "razorpayKeyId": None}
+
+    rc, plat_kid, _ = route_service.platform_client()
+    if not rc:
+        raise HTTPException(status_code=503, detail="Online payments are unavailable right now. Please try again shortly.")
+
     seller_payout_paise = int(round(amount_paise * (1.0 - commission_pct)))
 
     order_payload = {
@@ -1142,40 +1234,14 @@ async def checkout(slug: str, body: OrderIn, request: Request):
     rp_order_id = rp["id"]
     rp_key_id = plat_kid
 
-    await db.execute(
-        """
-        INSERT INTO orders (
-            order_id, seller_id, store_slug, buyer_name, buyer_email, buyer_phone,
-            address, items, subtotal, delivery_fee, tax, amount, status,
-            razorpay_order_id, razorpay_key_id, created_at
-        ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'placed', $13, $14, $15
-        )
-        """,
-        order_id, store["seller_id"], store["slug"], body.buyerName, body.buyerEmail, body.buyerPhone,
-        body.address, items, total, 0, 0, total, rp_order_id, rp_key_id, created_at
-    )
-
-    # Reserve stock (guarded so it can never go negative under a race).
-    for pid, d in demand.items():
-        if prod_cache[pid].get("stock") is not None:
-            await db.execute(
-                "UPDATE products SET stock = stock - $1 WHERE product_id = $2 AND stock >= $3",
-                d["product_qty"], pid, d["product_qty"]
-            )
-
-    seller = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", store["seller_id"])
-    if seller:
-        order_doc = {
-            "order_id": order_id, "amount": total, "items": items,
-            "buyerName": body.buyerName, "buyerEmail": body.buyerEmail,
-        }
-        asyncio.create_task(email_service.send_new_order_email(
-            seller["email"], seller.get("name"), order_doc, f"{FRONTEND_URL}/orders/{order_id}"))
+    await _record_order(order_id, store, body, items, total, created_at, rp_order_id, rp_key_id, "online")
+    await _reserve_stock(demand, prod_cache)
+    await _notify_new_order(store, order_id, total, items, body)
 
     return {
         "orderId": order_id,
         "amount": total,
+        "paymentMethod": "online",
         "razorpayOrderId": rp_order_id,
         "razorpayKeyId": rp_key_id,
     }
@@ -1322,9 +1388,11 @@ async def ship_order(order_id: str, user=Depends(get_current_user)):
     o = await db.fetch_one("SELECT * FROM orders WHERE order_id = $1 AND seller_id = $2", order_id, user["user_id"])
     if not o:
         raise HTTPException(status_code=404, detail="Order not found")
-    if o["status"] != "paid":
+    is_cod = (o.get("payment_method") or "online") == "cod"
+    # Cash-on-delivery orders ship before any money changes hands.
+    if o["status"] != "paid" and not (is_cod and o["status"] == "placed"):
         raise HTTPException(status_code=400, detail="Order must be paid before shipping")
-    
+
     otp = security.generate_otp()
     otp_hash = security.hash_otp(otp)
     otp_enc = security.encrypt_secret(otp)
@@ -1369,9 +1437,11 @@ async def confirm_delivery(order_id: str, body: OtpIn, request: Request, user=De
     window_min = int((store or {}).get("acceptance_window_minutes") or DEFAULT_WINDOW_MIN)
     delivered_at = iso(now())
     window_expires_at = iso(now() + timedelta(minutes=window_min))
+    # A COD order is settled the moment the seller takes the cash at handover.
+    paid_at = o.get("paid_at") or (delivered_at if (o.get("payment_method") or "online") == "cod" else None)
     await db.execute(
-        "UPDATE orders SET status = 'delivered', delivered_at = $1, window_expires_at = $2 WHERE order_id = $3",
-        delivered_at, window_expires_at, order_id
+        "UPDATE orders SET status = 'delivered', delivered_at = $1, window_expires_at = $2, paid_at = $3 WHERE order_id = $4",
+        delivered_at, window_expires_at, paid_at, order_id
     )
     return {"status": "delivered", "windowExpiresAt": window_expires_at}
 

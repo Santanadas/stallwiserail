@@ -184,11 +184,20 @@ export default function BuyerOrder() {
         </div>
 
         {/* Pay */}
-        {order.status === "placed" && (
+        {order.status === "placed" && order.paymentMethod !== "cod" && (
           <div className="mt-6">
             <Btn variant="primary" data-testid="buyer-pay-btn" onClick={pay} disabled={busy}>
               <CreditCard className="h-4 w-4" /> Pay with Razorpay
             </Btn>
+          </div>
+        )}
+
+        {order.paymentMethod === "cod" && order.status !== "completed" && (
+          <div className="mt-6 border-2 border-[#0A0A0A] bg-[#FFF4E0] p-5" data-testid="buyer-cod-note">
+            <p className="text-xs font-bold uppercase tracking-widest text-[#7A4A00]">Cash on delivery</p>
+            <p className="mt-2 text-sm text-[#7A4A00]">
+              Nothing to pay now — hand ₹{order.amount} to the seller when your order arrives.
+            </p>
           </div>
         )}
 

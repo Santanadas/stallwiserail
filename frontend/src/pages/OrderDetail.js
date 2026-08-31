@@ -73,6 +73,10 @@ export default function OrderDetail() {
   if (err && !order) return shell(<Note tone="error" data-testid="order-error">{err}</Note>);
   if (!order) return shell(<p className="text-sm text-[#525252]">Loading…</p>);
 
+  const isCod = order.paymentMethod === "cod";
+  // COD orders ship before any money changes hands.
+  const canShip = order.status === "paid" || (isCod && order.status === "placed");
+
   return shell(
     <div data-testid="order-detail" className="space-y-8">
       <div>
@@ -113,26 +117,37 @@ export default function OrderDetail() {
               </ul>
             </dd>
           </div>
-          {order.paidAt && (
-            <div>
-              <dt className="text-xs font-bold uppercase tracking-widest text-[#525252]">Payment</dt>
-              <dd className="mt-1 text-sm">Paid · settling to your bank</dd>
-            </div>
-          )}
+          <div>
+            <dt className="text-xs font-bold uppercase tracking-widest text-[#525252]">Payment</dt>
+            <dd className="mt-1 text-sm">
+              {isCod ? (
+                order.paidAt ? "Cash collected on delivery" : `Cash on delivery — collect ₹${order.amount}`
+              ) : order.paidAt ? (
+                "Paid online · settling to your bank"
+              ) : (
+                "Awaiting online payment"
+              )}
+            </dd>
+          </div>
         </dl>
       </Panel>
 
-      {(order.status === "paid" ||
+      {(canShip ||
         order.status === "shipped" ||
         order.status === "delivered") && (
         <Panel title="Delivery" testId="order-actions-panel">
           <div className="flex flex-wrap gap-3">
-            {order.status === "paid" && (
+            {canShip && (
               <Btn variant="primary" data-testid="ship-btn" onClick={() => act(() => api.post(`/orders/${order.order_id}/ship`))}>
                 <Truck className="h-4 w-4" /> Mark shipped (issues OTP to buyer)
               </Btn>
             )}
           </div>
+          {isCod && order.status === "shipped" && (
+            <Note tone="warning" className="mt-4">
+              Collect ₹{order.amount} in cash at handover, then enter the buyer's code below.
+            </Note>
+          )}
 
           {order.status === "shipped" && (
             <div className="mt-5 border-2 border-dashed border-neutral-300 p-4 sm:p-5">

@@ -17,6 +17,19 @@ const MAX_PHOTOS = 6;
 
 const blankGroup = () => ({ name: "", options: [{ label: "", priceDelta: "", stock: "" }] });
 
+const PAYMENT_OPTIONS = [
+  {
+    id: "online",
+    label: "Online payment",
+    hint: "UPI, cards, netbanking and wallets via Razorpay. Settles to your bank.",
+  },
+  {
+    id: "cod",
+    label: "Cash on delivery",
+    hint: "You collect cash at handover. Buyers only see this if you enable it.",
+  },
+];
+
 function emptyForm() {
   return {
     title: "",
@@ -26,6 +39,7 @@ function emptyForm() {
     active: true,
     images: [],
     groups: [],
+    paymentMethods: ["online"],
   };
 }
 
@@ -39,6 +53,7 @@ function formFromProduct(p) {
     stock: p.stock != null ? String(p.stock) : "",
     active: p.active !== false,
     images,
+    paymentMethods: (p.paymentMethods && p.paymentMethods.length) ? [...p.paymentMethods] : ["online"],
     groups: (p.optionGroups || []).map((g) => ({
       name: g.name || "",
       options: (g.options || []).map((o) => ({
@@ -239,10 +254,19 @@ export default function ProductEditor({ open, product, onClose, onSaved }) {
     [form.groups]
   );
 
+  const togglePayment = (id) =>
+    set(
+      "paymentMethods",
+      form.paymentMethods.includes(id)
+        ? form.paymentMethods.filter((m) => m !== id)
+        : [...form.paymentMethods, id]
+    );
+
   const submit = async () => {
     setErr("");
     if (!form.title.trim()) return setErr("Add a product title.");
     if (!form.price || Number(form.price) <= 0) return setErr("Add a price greater than ₹0.");
+    if (!form.paymentMethods.length) return setErr("Pick at least one way buyers can pay.");
     setSaving(true);
     const payload = {
       title: form.title.trim(),
@@ -252,6 +276,7 @@ export default function ProductEditor({ open, product, onClose, onSaved }) {
       active: form.active,
       image: form.images[0] || null,
       images: form.images,
+      paymentMethods: form.paymentMethods,
       optionGroups: groupsPayload,
     };
     try {
@@ -370,6 +395,47 @@ export default function ProductEditor({ open, product, onClose, onSaved }) {
 
           <Section
             step={4}
+            title="How buyers can pay"
+            hint="Turn off cash on delivery and buyers won't see it for this item."
+          >
+            <div className="space-y-3">
+              {PAYMENT_OPTIONS.map((opt) => {
+                const on = form.paymentMethods.includes(opt.id);
+                return (
+                  <label
+                    key={opt.id}
+                    data-testid={`payment-${opt.id}`}
+                    className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 transition-colors ${
+                      on ? "border-[#FF4F00] bg-[#FF4F00]/[0.04]" : "border-neutral-200 bg-white hover:border-neutral-300"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() => togglePayment(opt.id)}
+                      className="mt-0.5 h-4 w-4 shrink-0 accent-[#FF4F00]"
+                    />
+                    <span className="text-sm">
+                      <span className="font-bold text-[#0A0A0A]">{opt.label}</span>
+                      <span className="mt-0.5 block text-xs text-neutral-500">{opt.hint}</span>
+                    </span>
+                  </label>
+                );
+              })}
+              {!form.paymentMethods.length && (
+                <p className="text-xs font-bold text-[#8A2200]">Pick at least one — buyers need a way to pay.</p>
+              )}
+              {form.paymentMethods.length === 1 && form.paymentMethods[0] === "cod" && (
+                <p className="text-xs text-neutral-500">
+                  Cash only — this item won't be payable online, and can't be bought in the same
+                  order as online-only items.
+                </p>
+              )}
+            </div>
+          </Section>
+
+          <Section
+            step={5}
             title="Variants"
             hint="Optional — sizes, colours, or materials buyers choose between."
           >

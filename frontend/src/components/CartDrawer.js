@@ -1,10 +1,15 @@
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
-import { X, Trash2, ShoppingBag, Minus, Plus, ArrowRight } from "lucide-react";
+import { X, Trash2, ShoppingBag, Minus, Plus, ArrowRight, CreditCard, Banknote } from "lucide-react";
 
 const field =
   "mt-1.5 w-full min-h-[44px] border-2 border-[#0A0A0A] bg-white px-3 py-2.5 text-base outline-none focus:border-[#FF4F00] sm:text-sm";
 const labelText = "text-xs font-bold uppercase tracking-widest text-[#525252]";
+
+const PAY_LABELS = {
+  online: { label: "Pay online", hint: "UPI · Card · Netbanking · Wallet", Icon: CreditCard },
+  cod: { label: "Cash on delivery", hint: "Pay the seller at handover", Icon: Banknote },
+};
 
 export default function CartDrawer({
   open,
@@ -18,6 +23,9 @@ export default function CartDrawer({
   checkout,
   placing,
   err,
+  allowedPayments = ["online"],
+  payMethod = "online",
+  setPayMethod,
 }) {
   useEffect(() => {
     if (!open) return;
@@ -34,7 +42,10 @@ export default function CartDrawer({
   if (!open) return null;
 
   const phoneOk = (buyer.buyerPhone || "").replace(/\D/g, "").length >= 8;
-  const canPay = !placing && buyer.buyerName.trim() && buyer.buyerEmail.trim() && phoneOk && cart.length > 0;
+  const noSharedMethod = cart.length > 0 && allowedPayments.length === 0;
+  const canPay =
+    !placing && buyer.buyerName.trim() && buyer.buyerEmail.trim() && phoneOk && cart.length > 0 && !noSharedMethod;
+  const payCta = payMethod === "cod" ? `Place order · ₹${cartTotal}` : `Pay ₹${cartTotal}`;
 
   return createPortal(
     <div className="mk fixed inset-0 z-[100] flex justify-end" data-testid="cart-drawer">
@@ -138,6 +149,47 @@ export default function CartDrawer({
               </span>
             </div>
 
+            {/* Payment method */}
+            <div className="mt-4">
+              <span className={labelText}>Payment</span>
+              {noSharedMethod ? (
+                <p className="mt-1.5 border-2 border-[#0A0A0A] bg-[#FFE9E0] px-3 py-2 text-xs font-medium text-[#8A2200]">
+                  These items don't share a payment method — order the cash-only items separately.
+                </p>
+              ) : (
+                <div className="mt-1.5 grid gap-2" data-testid="payment-methods">
+                  {allowedPayments.map((m) => {
+                    const { label, hint, Icon } = PAY_LABELS[m] || PAY_LABELS.online;
+                    const on = payMethod === m;
+                    const only = allowedPayments.length === 1;
+                    return (
+                      <button
+                        key={m}
+                        type="button"
+                        data-testid={`pay-${m}`}
+                        onClick={() => setPayMethod?.(m)}
+                        aria-pressed={on}
+                        className={`flex items-center gap-3 border-2 px-3 py-2.5 text-left transition-colors ${
+                          on ? "border-[#0A0A0A] bg-[#FFF4E0]" : "border-neutral-300 bg-white hover:border-[#0A0A0A]"
+                        }`}
+                      >
+                        <Icon className={`h-4 w-4 shrink-0 ${on ? "text-[#FF4F00]" : "text-neutral-400"}`} />
+                        <span className="min-w-0">
+                          <span className="block text-sm font-bold">{label}</span>
+                          <span className="block text-xs text-[#525252]">{hint}</span>
+                        </span>
+                        {!only && (
+                          <span
+                            className={`ml-auto h-3.5 w-3.5 shrink-0 rounded-full border-2 border-[#0A0A0A] ${on ? "bg-[#FF4F00]" : "bg-white"}`}
+                          />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
             <div className="mt-4 space-y-3">
               <label className="block">
                 <span className={labelText}>Your name</span>
@@ -179,10 +231,12 @@ export default function CartDrawer({
               disabled={!canPay}
               className="mt-4 inline-flex w-full min-h-[48px] items-center justify-center gap-2 border-2 border-[#0A0A0A] bg-[#0A0A0A] px-4 py-3 text-sm font-bold text-white transition-transform hover:-translate-y-0.5 hover:bg-[#FF4F00] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
             >
-              {placing ? "Processing…" : <>Pay ₹{cartTotal} <ArrowRight className="h-4 w-4" /></>}
+              {placing ? "Processing…" : <>{payCta} <ArrowRight className="h-4 w-4" /></>}
             </button>
             <p className="mt-2 text-center text-xs text-[#525252]">
-              Secure payment via Razorpay — money goes straight to the seller.
+              {payMethod === "cod"
+                ? "Pay the seller in cash when your order is delivered."
+                : "Secure payment via Razorpay — money goes straight to the seller."}
             </p>
             {err && (
               <p

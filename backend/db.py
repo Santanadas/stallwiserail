@@ -148,6 +148,7 @@ def _init_sqlite_schema(conn: sqlite3.Connection):
         active BOOLEAN DEFAULT 1,
         image TEXT,
         images TEXT DEFAULT '[]',
+        payment_methods TEXT DEFAULT '["online"]',
         created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_products_seller ON products(seller_id);
@@ -232,10 +233,12 @@ _COLUMN_MIGRATIONS: Dict[str, Dict[str, str]] = {
     },
     "products": {
         "images": "TEXT DEFAULT '[]'",
+        "payment_methods": "TEXT DEFAULT '[\"online\"]'",
     },
     "orders": {
         "window_expires_at": "TEXT",
         "dispute_reason": "TEXT",
+        "payment_method": "TEXT DEFAULT 'online'",
     },
 }
 
@@ -289,7 +292,7 @@ def _row_to_dict(row: Optional[sqlite3.Row]) -> Optional[Dict[str, Any]]:
     if not row:
         return None
     d = dict(row)
-    for k in ("option_groups", "images", "address", "items", "notes"):
+    for k in ("option_groups", "images", "payment_methods", "address", "items", "notes"):
         if k in d and isinstance(d[k], str):
             try:
                 d[k] = json.loads(d[k])
