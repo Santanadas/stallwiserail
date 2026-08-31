@@ -3,6 +3,26 @@ import api, { formatApiError } from "@/lib/api";
 
 const AuthContext = createContext(null);
 
+/**
+ * Whether this browser has any sign of a session, checked synchronously.
+ *
+ * Used by the root route to decide whether it must wait for /auth/me before
+ * rendering. A signed-in visitor always has one of these, so anonymous
+ * visitors (and crawlers) never get held behind a network round trip.
+ */
+export function hasStoredSession() {
+  try {
+    return Boolean(
+      localStorage.getItem("stallwise_user") ||
+        sessionStorage.getItem("stallwise_user") ||
+        localStorage.getItem("stallwise_token") ||
+        sessionStorage.getItem("stallwise_token")
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
     try {

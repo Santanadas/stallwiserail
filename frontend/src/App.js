@@ -1,7 +1,7 @@
 import "@/App.css";
 import { lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
-import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { AuthProvider, useAuth, hasStoredSession } from "@/context/AuthContext";
 import AuthCallback from "@/components/AuthCallback";
 
 /**
@@ -36,6 +36,22 @@ function RouteFallback() {
   );
 }
 
+/**
+ * The landing page is for signed-out visitors. Anyone already signed in goes
+ * straight to their dashboard without the landing page rendering first.
+ *
+ * We only block on `loading` when the browser actually shows signs of a
+ * session. Otherwise an anonymous visitor — and Googlebot — would sit behind a
+ * spinner waiting for /auth/me to 401 before the homepage painted, which would
+ * cost us LCP on the one page we most want ranking.
+ */
+function RootRoute() {
+  const { user, loading } = useAuth();
+  if (loading && hasStoredSession()) return <RouteFallback />;
+  if (user) return <Navigate to="/dashboard" replace />;
+  return <Landing />;
+}
+
 function Protected({ children }) {
   const { user, loading } = useAuth();
   if (loading) return <RouteFallback />;
@@ -49,7 +65,7 @@ function AppRoutes() {
   return (
     <Suspense fallback={<RouteFallback />}>
       <Routes>
-        <Route path="/" element={<Landing />} />
+        <Route path="/" element={<RootRoute />} />
         <Route path="/shops" element={<Shops />} />
         <Route path="/sell-online" element={<SellOnline />} />
         <Route path="/about" element={<About />} />
