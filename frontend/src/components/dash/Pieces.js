@@ -40,46 +40,82 @@ export function Stat({ label, value, delta, foot }) {
   );
 }
 
-/** Single-series area chart. One hue, recessive grid, only the last point
- *  labelled — a number on every point is noise at this size. */
+/** Single-series area chart.
+ *
+ * The plot stretches to the container with preserveAspectRatio="none", which
+ * would distort any text inside the SVG — squashing the axis labels on a phone
+ * and stretching them on a wide screen. So the graphics live in the SVG and
+ * every label is HTML positioned over it.
+ */
 export function Sparkline({ points, height = 190 }) {
   const data = points || [];
   const max = Math.max(1, ...data.map((d) => d.amount));
   const W = 700;
-  const top = 12;
-  const bottom = height - 26;
-  const left = 42;
-  const step = data.length > 1 ? (W - left - 16) / (data.length - 1) : 0;
-  const xy = data.map((d, i) => [
-    left + i * step,
-    bottom - (d.amount / max) * (bottom - top),
-  ]);
+  const top = 8;
+  const bottom = height - 8;
+  const step = data.length > 1 ? W / (data.length - 1) : 0;
+  const xy = data.map((d, i) => [i * step, bottom - (d.amount / max) * (bottom - top)]);
   const line = xy.map(([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`).join(" L ");
   const last = data[data.length - 1];
-  const gridY = [top, top + (bottom - top) / 2, bottom];
+  const fmtDay = (iso) =>
+    iso ? new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "";
 
   return (
     <div>
-      <svg width="100%" height={height} viewBox={`0 0 ${W} ${height}`} preserveAspectRatio="none" className="block overflow-visible">
-        {gridY.map((y, i) => (
-          <line key={y} x1={left} y1={y} x2={W} y2={y} stroke={i === 2 ? "#E5E5E5" : "#F5F5F5"} strokeWidth="1" />
-        ))}
-        <text x={left - 6} y={top + 4} textAnchor="end" fontSize="10" fontWeight="600" fill="#A3A3A3">{inr(max)}</text>
-        <text x={left - 6} y={bottom + 4} textAnchor="end" fontSize="10" fontWeight="600" fill="#A3A3A3">0</text>
-        {data.length > 1 && (
-          <>
-            <path d={`M ${line} L ${xy[xy.length - 1][0].toFixed(1)} ${bottom} L ${left} ${bottom} Z`} fill="#FF4F00" fillOpacity="0.07" />
-            <path d={`M ${line}`} fill="none" stroke="#FF4F00" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            <circle cx={xy[xy.length - 1][0]} cy={xy[xy.length - 1][1]} r="4" fill="#FF4F00" stroke="#fff" strokeWidth="2" />
-          </>
-        )}
-      </svg>
-      <div className="flex justify-between pl-[42px] pt-2">
-        <span className="text-[10px] font-semibold text-neutral-400">
-          {data[0] ? new Date(data[0].date).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : ""}
-        </span>
+      <div className="flex gap-2">
+        {/* Y axis — HTML, so it never distorts with the plot */}
+        <div
+          className="flex shrink-0 flex-col justify-between py-px text-right text-[10px] font-semibold text-neutral-400"
+          style={{ height }}
+        >
+          <span>{inr(max)}</span>
+          <span>{inr(max / 2)}</span>
+          <span>0</span>
+        </div>
+        <div className="relative min-w-0 flex-1">
+          {/* Grid — also HTML, so the hairlines stay 1px at every width */}
+          <div className="pointer-events-none absolute inset-0 flex flex-col justify-between">
+            <div className="h-px bg-neutral-100" />
+            <div className="h-px bg-neutral-100" />
+            <div className="h-px bg-neutral-200" />
+          </div>
+          <svg
+            width="100%"
+            height={height}
+            viewBox={`0 0 ${W} ${height}`}
+            preserveAspectRatio="none"
+            className="relative block"
+            role="img"
+            aria-label={`Sales per day. Latest ${fmtDay(last?.date)}: ${inr(last?.amount || 0)}`}
+          >
+            {data.length > 1 && (
+              <>
+                <path d={`M ${line} L ${W} ${bottom} L 0 ${bottom} Z`} fill="#FF4F00" fillOpacity="0.07" />
+                {/* vectorEffect keeps the stroke 2px however far the plot is stretched */}
+                <path
+                  d={`M ${line}`}
+                  fill="none"
+                  stroke="#FF4F00"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  vectorEffect="non-scaling-stroke"
+                />
+              </>
+            )}
+          </svg>
+          {data.length > 1 && (
+            <span
+              className="pointer-events-none absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-[#FF4F00]"
+              style={{ left: "100%", top: `${((xy[xy.length - 1][1] - 0) / height) * 100}%` }}
+            />
+          )}
+        </div>
+      </div>
+      <div className="flex justify-between pl-[46px] pt-2">
+        <span className="text-[10px] font-semibold text-neutral-400">{fmtDay(data[0]?.date)}</span>
         <span className="text-[10px] font-bold text-neutral-600">
-          {last ? `${new Date(last.date).toLocaleDateString("en-IN", { day: "numeric", month: "short" })} · ${inr(last.amount)}` : ""}
+          {last ? `${fmtDay(last.date)} · ${inr(last.amount)}` : ""}
         </span>
       </div>
     </div>

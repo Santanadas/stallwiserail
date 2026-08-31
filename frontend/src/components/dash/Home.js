@@ -152,7 +152,7 @@ export default function HomeSection({ summary, loading, error, onRetry, orders, 
           </span>
         </div>
         {tasks.length ? (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{tasks}</div>
+          <div className="grid gap-3 min-[440px]:grid-cols-2 xl:grid-cols-4">{tasks}</div>
         ) : (
           <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4">
             <Check className="h-5 w-5 shrink-0 text-emerald-600" />
@@ -202,15 +202,15 @@ export default function HomeSection({ summary, loading, error, onRetry, orders, 
               <div className="-mx-5 -my-1 divide-y divide-neutral-100">
                 {orders.slice(0, 5).map((o) => (
                   <Link key={o.order_id} to={`/orders/${o.order_id}`}
-                    className="flex items-center gap-3 px-5 py-2.5 transition-colors hover:bg-neutral-50">
-                    <div className="min-w-0 flex-1">
+                    className="flex min-h-[56px] flex-wrap items-center gap-x-3 gap-y-1.5 px-5 py-2.5 transition-colors hover:bg-neutral-50">
+                    <div className="min-w-0 flex-1 basis-[55%]">
                       <div className="truncate text-[13px] font-bold text-[#0A0A0A]">{o.buyerName}</div>
                       <div className="truncate text-[11px] font-medium text-neutral-400">
                         {(o.items || []).map((i) => `${i.title} ×${i.quantity}`).join(", ")}
                       </div>
                     </div>
-                    <StatusPill status={o.status} />
-                    <div className="w-[74px] shrink-0 text-right text-[13px] font-extrabold text-[#0A0A0A]">{inr(o.amount)}</div>
+                    <div className="ml-auto text-[13px] font-extrabold text-[#0A0A0A]">{inr(o.amount)}</div>
+                    <div className="basis-full sm:basis-auto sm:order-first"><StatusPill status={o.status} /></div>
                   </Link>
                 ))}
               </div>

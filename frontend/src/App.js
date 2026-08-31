@@ -1,8 +1,7 @@
 import "@/App.css";
 import { lazy, Suspense } from "react";
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth, hasStoredSession } from "@/context/AuthContext";
-import AuthCallback from "@/components/AuthCallback";
 
 /**
  * Every route is code-split. Before this the whole app — dashboard, product
@@ -60,8 +59,6 @@ function Protected({ children }) {
 }
 
 function AppRoutes() {
-  const location = useLocation();
-  if (location.hash?.includes("session_id=")) return <AuthCallback />;
   return (
     <Suspense fallback={<RouteFallback />}>
       <Routes>

@@ -119,6 +119,26 @@ SPA fallback are on the root app. Supporting modules:
 
 ## Gotchas
 
+- **The Razorpay SDK sets no timeout.** `Client.request` catches
+  `requests.exceptions.Timeout` but never passes one, and it retries on top, so a
+  slow gateway hangs the call indefinitely. Every Razorpay call runs inside
+  `asyncio.to_thread`, so hung calls hold threads in the default executor —
+  exhaust it and image serving and (on SQLite) database queries stall with it,
+  which is how one slow payment request stops the origin answering and Cloudflare
+  reports 520. Always build clients through `route_service.razorpay_client()`,
+  never `razorpay.Client()` directly; a test asserts this.
+- **`/api/auth/google/session` was an authentication bypass** and has been
+  removed. It took a `session_id`, asked `demobackend.emergentagent.com` (dead
+  Emergent scaffolding) whose it was, and logged in as whatever email came back,
+  creating the account if absent. Nothing in the UI ever offered Google sign-in.
+  Do not reinstate an identity provider you do not control.
+- **`DEV_OTP_ECHO=true` returns login OTPs in API responses** — a complete
+  authentication bypass on a public deploy. `/health` now reports
+  `status: "insecure"` when it is set. Never set it in Railway.
+- **Shop settings must be applied, not just stored.** Delivery charges were
+  saved on the store row and shown in Settings for a while without `checkout()`
+  ever reading them, so buyers were never billed. `delivery_for()` is the single
+  place that decides a delivery charge.
 - **Postgres was never actually exercised.** Three separate defects meant a
   Postgres deployment silently failed and fell back to SQLite: (1) there was no
   `CREATE TABLE` for Postgres at all — `_init_sqlite_schema` is SQLite-only and

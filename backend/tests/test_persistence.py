@@ -92,17 +92,34 @@ def test_health_reports_no_storage_warning_on_a_normal_boot(app_client):
 def test_health_reports_degraded_storage(app_client, monkeypatch):
     monkeypatch.setattr(db, "ephemeral_storage_warning", lambda: "Data will be LOST.")
     body = app_client.get("/health").json()
-    assert body["status"] == "degraded"
+    assert body["status"] != "ok"
     assert body["warning"] == "Data will be LOST."
 
 
 def test_health_names_the_missing_environment_variables(app_client, monkeypatch):
     monkeypatch.delenv("RAZORPAY_KEY_ID", raising=False)
     body = app_client.get("/health").json()
-    assert body["status"] == "degraded"
+    assert body["status"] != "ok"
     assert "RAZORPAY_KEY_ID" in body["missingConfig"]
     # The ones that are set must not be reported.
     assert "ENCRYPTION_KEY" not in body["missingConfig"]
+
+
+def test_health_shouts_when_the_otp_debug_echo_is_on(app_client, monkeypatch):
+    """DEV_OTP_ECHO returns login OTPs in API responses. On a public deploy
+    that is a complete authentication bypass — it must outrank every other
+    warning so it cannot be missed."""
+    monkeypatch.setenv("DEV_OTP_ECHO", "true")
+    body = app_client.get("/health").json()
+    assert body["status"] == "insecure"
+    assert "DEV_OTP_ECHO" in body["danger"]
+
+
+def test_health_is_quiet_about_otp_echo_when_it_is_off(app_client, monkeypatch):
+    monkeypatch.delenv("DEV_OTP_ECHO", raising=False)
+    body = app_client.get("/health").json()
+    assert body["status"] != "insecure"
+    assert "danger" not in body
 
 
 

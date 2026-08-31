@@ -125,10 +125,6 @@ class ResetIn(BaseModel):
     password: str = Field(min_length=6, max_length=128)
 
 
-class GoogleSessionIn(BaseModel):
-    session_id: str = Field(min_length=1, max_length=256)
-
-
 class StoreIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     slug: str = Field(min_length=2, max_length=60)
@@ -663,7 +659,11 @@ async def forgot_password(body: ForgotIn, request: Request):
 
 
 @api.post("/auth/reset-password")
-async def reset_password(body: ResetIn):
+async def reset_password(body: ResetIn, request: Request):
+    # Reset tokens are 256-bit, but unlimited guessing is still not something
+    # to leave open.
+    if not security.check_rate_limit(f"reset:{get_client_ip(request)}", max_requests=10, window_seconds=900):
+        raise HTTPException(status_code=429, detail="Too many attempts. Please try again later.")
     rec = await db.fetch_one("SELECT * FROM password_reset_tokens WHERE token = $1", body.token)
     if not rec or rec.get("used"):
         raise HTTPException(status_code=400, detail="Invalid or used token")
@@ -673,48 +673,6 @@ async def reset_password(body: ResetIn):
                      security.hash_password(body.password), rec["user_id"])
     await db.execute("UPDATE password_reset_tokens SET used = TRUE WHERE token = $1", body.token)
     return {"ok": True}
-
-
-@api.post("/auth/google/session")
-async def google_session(body: GoogleSessionIn, response: Response):
-    async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.get("https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
-                        headers={"X-Session-ID": body.session_id})
-    if r.status_code != 200:
-        raise HTTPException(status_code=401, detail="Invalid session")
-    data = r.json()
-    email = data["email"].lower()
-    user = await db.fetch_one("SELECT * FROM users WHERE email = $1", email)
-    if not user:
-        user_id = new_id("user")
-        await db.execute(
-            """
-            INSERT INTO users (user_id, email, name, picture, role, auth_provider, subscription_status, created_at)
-            VALUES ($1, $2, $3, $4, 'seller', 'google', 'inactive', $5)
-            """,
-            user_id, email, data.get("name"), data.get("picture"), iso(now())
-        )
-        user = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", user_id)
-    else:
-        await db.execute(
-            "UPDATE users SET name = $1, picture = $2 WHERE email = $3",
-            data.get("name"), data.get("picture"), email
-        )
-        user = await db.fetch_one("SELECT * FROM users WHERE email = $1", email)
-
-    session_token = data["session_token"]
-    await db.execute(
-        """
-        INSERT INTO user_sessions (user_id, session_token, expires_at, created_at)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (session_token) DO UPDATE SET expires_at = EXCLUDED.expires_at
-        """,
-        user["user_id"], session_token, iso(now() + timedelta(days=365)), iso(now())
-    )
-    token = set_jwt_cookies(response, user["user_id"], user["email"])
-    out = await public_user(user)
-    out["token"] = token
-    return out
 
 
 # ======================= Store routes =======================
@@ -1105,6 +1063,22 @@ def _clean_product_images(body: "ProductIn") -> List[str]:
     return out[:8]
 
 
+def delivery_for(store: dict, subtotal: float) -> float:
+    """The delivery charge this shop applies to an order of ``subtotal``.
+
+    Free once the shop's free-delivery threshold is met; the threshold is
+    inclusive, because "free delivery above ₹1,500" reads to a buyer as
+    "spend ₹1,500 and it is free".
+    """
+    fee = float(store.get("delivery_fee") or 0)
+    if fee <= 0:
+        return 0.0
+    threshold = store.get("free_delivery_above")
+    if threshold is not None and subtotal >= float(threshold):
+        return 0.0
+    return round(fee, 2)
+
+
 def _clean_payment_methods(body: "ProductIn") -> List[str]:
     """Keep the seller's selection in a stable order and never allow an empty
     set — a product with no payment method could not be bought."""
@@ -1205,7 +1179,11 @@ def _month_key(dt) -> str:
 
 
 @api.get("/dashboard/summary")
-async def dashboard_summary(user=Depends(get_current_user)):
+async def dashboard_summary(request: Request, user=Depends(get_current_user)):
+    # Reads up to 2000 orders and aggregates them in Python, so it is the most
+    # expensive authenticated call in the app.
+    if not security.check_rate_limit(f"summary:{user['user_id']}", max_requests=120, window_seconds=60):
+        raise HTTPException(status_code=429, detail="Too many requests. Please slow down.")
     """Every figure the dashboard shows, computed from this seller's own rows.
 
     One round trip instead of the client pulling orders and products and doing
@@ -1470,8 +1448,9 @@ async def finalize_if_expired(order: dict) -> dict:
     return order
 
 
-async def _record_order(order_id, store, body: OrderIn, items, total, created_at,
-                        rp_order_id, rp_key_id, pay_method: str):
+async def _record_order(order_id, store, body: OrderIn, items, subtotal, created_at,
+                        rp_order_id, rp_key_id, pay_method: str, delivery: float = 0.0,
+                        amount: Optional[float] = None):
     await db.execute(
         """
         INSERT INTO orders (
@@ -1483,7 +1462,9 @@ async def _record_order(order_id, store, body: OrderIn, items, total, created_at
         )
         """,
         order_id, store["seller_id"], store["slug"], body.buyerName, body.buyerEmail, body.buyerPhone,
-        body.address, items, total, 0, 0, total, rp_order_id, rp_key_id, pay_method, created_at
+        body.address, items, subtotal, delivery, 0,
+        (subtotal + delivery) if amount is None else amount,
+        rp_order_id, rp_key_id, pay_method, created_at
     )
 
 
@@ -1580,6 +1561,10 @@ async def checkout(slug: str, body: OrderIn, request: Request):
     order_id = new_id("ord")
     created_at = iso(now())
 
+    subtotal = total
+    delivery = delivery_for(store, subtotal)
+    total = round(subtotal + delivery, 2)
+
     amount_paise = int(round(total * 100))
     if amount_paise <= 0:
         raise HTTPException(status_code=400, detail="Order total must be greater than zero")
@@ -1594,10 +1579,12 @@ async def checkout(slug: str, body: OrderIn, request: Request):
 
     if pay_method == "cod":
         # No gateway leg — the seller collects cash at handover.
-        await _record_order(order_id, store, body, items, total, created_at, None, None, "cod")
+        await _record_order(order_id, store, body, items, subtotal, created_at, None, None, "cod",
+                            delivery=delivery, amount=total)
         await _reserve_stock(demand, prod_cache)
         await _notify_new_order(store, order_id, total, items, body)
-        return {"orderId": order_id, "amount": total, "paymentMethod": "cod",
+        return {"orderId": order_id, "amount": total, "subtotal": subtotal,
+                "deliveryFee": delivery, "paymentMethod": "cod",
                 "razorpayOrderId": None, "razorpayKeyId": None}
 
     rc, plat_kid, _ = route_service.platform_client()
@@ -1645,12 +1632,15 @@ async def checkout(slug: str, body: OrderIn, request: Request):
     rp_order_id = rp["id"]
     rp_key_id = plat_kid
 
-    await _record_order(order_id, store, body, items, total, created_at, rp_order_id, rp_key_id, "online")
+    await _record_order(order_id, store, body, items, subtotal, created_at, rp_order_id, rp_key_id,
+                        "online", delivery=delivery, amount=total)
     await _reserve_stock(demand, prod_cache)
     await _notify_new_order(store, order_id, total, items, body)
 
     return {
         "orderId": order_id,
+        "subtotal": subtotal,
+        "deliveryFee": delivery,
         "amount": total,
         "paymentMethod": "online",
         "razorpayOrderId": rp_order_id,
@@ -1691,7 +1681,11 @@ async def seller_order_detail(order_id: str, user=Depends(get_current_user)):
 
 
 @api.get("/order/{order_id}")
-async def buyer_order_detail(order_id: str, email: str = Query("")):
+async def buyer_order_detail(order_id: str, request: Request, email: str = Query("")):
+    # This response carries the buyer's name, phone, address and delivery code.
+    # Without a limit an order id could be paired against guessed emails freely.
+    if not security.check_rate_limit(f"order_view:{get_client_ip(request)}", max_requests=60, window_seconds=300):
+        raise HTTPException(status_code=429, detail="Too many requests. Please slow down.")
     o = await db.fetch_one("SELECT * FROM orders WHERE order_id = $1", order_id)
     # Require the buyer's email — the response carries PII and the delivery OTP.
     if not o or (o.get("buyer_email") or "").lower() != email.lower().strip():
@@ -1739,7 +1733,9 @@ async def verify_order_payment(order_id: str, body: PayVerifyIn):
 
 
 @api.post("/order/{order_id}/dispute")
-async def raise_dispute(order_id: str, body: DisputeIn):
+async def raise_dispute(order_id: str, body: DisputeIn, request: Request):
+    if not security.check_rate_limit(f"dispute:{get_client_ip(request)}", max_requests=20, window_seconds=600):
+        raise HTTPException(status_code=429, detail="Too many requests. Please slow down.")
     o = await db.fetch_one("SELECT * FROM orders WHERE order_id = $1", order_id)
     if not o:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -1874,7 +1870,7 @@ _RP_KEY_SECRET = (os.environ.get("RAZORPAY_KEY_SECRET") or "").strip()
 def platform_rp_client():
     if not _RP_KEY_ID or not _RP_KEY_SECRET:
         raise HTTPException(status_code=503, detail="Platform billing is not configured yet")
-    return razorpay.Client(auth=(_RP_KEY_ID, _RP_KEY_SECRET)), _RP_KEY_ID
+    return route_service.razorpay_client(_RP_KEY_ID, _RP_KEY_SECRET), _RP_KEY_ID
 
 
 @api.get("/subscription")
@@ -1912,7 +1908,7 @@ async def create_subscription(body: SubCreateIn, user=Depends(get_current_user))
 
     # Live Real Money Razorpay Order Creation
     try:
-        rp_client = razorpay.Client(auth=(kid, ksec))
+        rp_client = route_service.razorpay_client(kid, ksec)
         amount_paise = int(round(amount * 100))
         rp_order = await asyncio.to_thread(rp_client.order.create, {
             "amount": amount_paise,
@@ -1952,7 +1948,7 @@ async def verify_subscription_payment(body: PayVerifyIn, user=Depends(get_curren
         raise HTTPException(status_code=400, detail="Payment signature verification failed")
     
     # Fetch Razorpay order details to know interval
-    rp_client = razorpay.Client(auth=(_RP_KEY_ID, _RP_KEY_SECRET))
+    rp_client = route_service.razorpay_client(_RP_KEY_ID, _RP_KEY_SECRET)
     rp_order = await asyncio.to_thread(rp_client.order.fetch, body.razorpay_order_id)
     notes = rp_order.get("notes") or {}
     interval = notes.get("interval", "monthly")
@@ -2000,6 +1996,11 @@ async def health_check():
     if missing:
         out["status"] = "degraded"
         out["missingConfig"] = missing
+    # DEV_OTP_ECHO returns login OTPs in API responses. On a public deployment
+    # that is a complete authentication bypass, so say so loudly.
+    if (os.environ.get("DEV_OTP_ECHO") or "").lower() == "true":
+        out["status"] = "insecure"
+        out["danger"] = "DEV_OTP_ECHO is enabled — login OTPs are being returned in API responses. Unset it."
     return out
 
 

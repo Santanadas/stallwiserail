@@ -97,7 +97,7 @@ export default function Shell({
                     type="button"
                     data-testid={`nav-${it.id}`}
                     onClick={() => onNav(it.id)}
-                    className={`flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2.5 text-[13px] transition-colors ${
+                    className={`flex min-h-[44px] w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-[13px] transition-colors ${
                       on
                         ? "bg-[#FFF7ED] font-bold text-[#C43D00]"
                         : "font-semibold text-neutral-600 hover:bg-neutral-50"
@@ -140,7 +140,7 @@ export default function Shell({
             type="button"
             onClick={onLogout}
             data-testid="logout-btn"
-            className="flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-[13px] font-semibold text-neutral-500 transition-colors hover:bg-neutral-50 hover:text-neutral-800"
+            className="flex min-h-[44px] w-full items-center gap-2.5 rounded-[10px] px-2.5 text-[13px] font-semibold text-neutral-500 transition-colors hover:bg-neutral-50 hover:text-neutral-800"
           >
             <LogOut className="h-4 w-4" /> Log out
           </button>
@@ -156,20 +156,28 @@ export default function Shell({
           </div>
           <div className="flex items-center gap-2">
             {action}
+            <button
+              type="button"
+              onClick={onLogout}
+              className="flex h-11 w-11 items-center justify-center rounded-[10px] border border-neutral-200 bg-white text-neutral-500 transition-colors hover:bg-neutral-50 lg:hidden"
+              title="Log out"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
             {store?.slug && (
               <>
                 <button
                   type="button"
                   onClick={copy}
                   data-testid="copy-shop-url"
-                  className="hidden h-9 items-center gap-1.5 rounded-[10px] border border-neutral-200 bg-white px-3 text-xs font-semibold text-neutral-600 transition-colors hover:bg-neutral-50 sm:flex"
+                  className="hidden h-11 items-center gap-1.5 rounded-[10px] border border-neutral-200 bg-white px-3 text-xs font-semibold text-neutral-600 transition-colors hover:bg-neutral-50 lg:flex"
                 >
                   stallwise.in/{store.slug}
                   {counts.copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5 text-neutral-400" />}
                 </button>
                 <Link
                   to={`/${store.slug}`}
-                  className="flex h-9 w-9 items-center justify-center rounded-[10px] border border-neutral-200 bg-white text-neutral-600 transition-colors hover:bg-neutral-50"
+                  className="flex h-11 w-11 items-center justify-center rounded-[10px] border border-neutral-200 bg-white text-neutral-600 transition-colors hover:bg-neutral-50"
                   title="View your shop"
                 >
                   <ExternalLink className="h-4 w-4" />
@@ -179,7 +187,7 @@ export default function Shell({
             <button
               type="button"
               onClick={() => onNav("orders")}
-              className="relative flex h-9 w-9 items-center justify-center rounded-[10px] border border-neutral-200 bg-white text-neutral-600 transition-colors hover:bg-neutral-50"
+              className="relative hidden h-11 w-11 items-center justify-center rounded-[10px] border border-neutral-200 bg-white text-neutral-600 transition-colors hover:bg-neutral-50 sm:flex"
               title="Things needing attention"
             >
               <Bell className="h-4 w-4" />
@@ -187,26 +195,35 @@ export default function Shell({
                 <span className="absolute right-1.5 top-1.5 h-[7px] w-[7px] rounded-full border-[1.5px] border-white bg-[#FF4F00]" />
               )}
             </button>
-            <div className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-[#0A0A0A] text-[13px] font-black text-white">
+            <div className="hidden h-11 w-11 items-center justify-center rounded-[10px] bg-[#0A0A0A] text-[13px] font-black text-white sm:flex">
               {(user?.name || user?.email || "S").slice(0, 2).toUpperCase()}
             </div>
           </div>
         </header>
 
-        {/* Mobile nav — the sidebar is desktop-only */}
-        <div className="flex gap-1 overflow-x-auto border-b border-neutral-200 bg-white px-3 py-2 lg:hidden">
-          {NAV_GROUPS.flatMap((g) => g.items).map((it) => (
-            <button
-              key={it.id}
-              type="button"
-              onClick={() => onNav(it.id)}
-              className={`shrink-0 rounded-[10px] px-3 py-2 text-xs font-bold transition-colors ${
-                active === it.id ? "bg-[#FFF7ED] text-[#C43D00]" : "text-neutral-600"
-              }`}
-            >
-              {it.label}
-            </button>
-          ))}
+        {/* Mobile nav — the sidebar is desktop-only. 44px minimum touch target. */}
+        <div className="scrollbar-none flex gap-1 overflow-x-auto border-b border-neutral-200 bg-white px-3 py-1.5 lg:hidden">
+          {NAV_GROUPS.flatMap((g) => g.items).map((it) => {
+            const on = active === it.id;
+            const badge = it.badge === "toShip" && counts.toShip ? counts.toShip : null;
+            return (
+              <button
+                key={it.id}
+                type="button"
+                onClick={() => onNav(it.id)}
+                className={`flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-[10px] px-3.5 text-[13px] transition-colors ${
+                  on ? "bg-[#FFF7ED] font-bold text-[#C43D00]" : "font-semibold text-neutral-600"
+                }`}
+              >
+                {it.label}
+                {badge && (
+                  <span className="rounded-full bg-[#FF4F00] px-1.5 py-0.5 text-[10px] font-black text-white">
+                    {badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
         <main className="flex-1 px-4 py-6 sm:px-7">{children}</main>

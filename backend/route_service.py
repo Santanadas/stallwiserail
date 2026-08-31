@@ -34,11 +34,35 @@ def _keys():
     return kid, ksec
 
 
+# The Razorpay SDK never passes a timeout to requests — Client.request catches
+# requests.exceptions.Timeout but nothing ever sets one — and it retries on top.
+# A slow or unreachable gateway therefore hangs the call indefinitely. Because
+# every Razorpay call runs inside asyncio.to_thread, hung calls hold threads in
+# the default executor; exhaust that pool and every other threaded operation
+# stalls with it — image serving and, on the SQLite path, database queries. That
+# is how one slow payment request stops the whole origin answering and Cloudflare
+# reports a 520. Bound it well under Cloudflare's 100-second ceiling.
+RAZORPAY_TIMEOUT = float(os.environ.get("RAZORPAY_TIMEOUT", "15"))
+
+
+class _TimeoutSession(requests.Session):
+    """A requests Session that applies a default timeout to every call."""
+
+    def request(self, *args, **kwargs):
+        kwargs.setdefault("timeout", RAZORPAY_TIMEOUT)
+        return super().request(*args, **kwargs)
+
+
+def razorpay_client(kid: str, ksec: str):
+    """Build a Razorpay client that cannot hang forever."""
+    return razorpay.Client(auth=(kid, ksec), session=_TimeoutSession(), max_retries=1)
+
+
 def platform_client():
     kid, ksec = _keys()
     if not kid or not ksec:
         return None, None, None
-    return razorpay.Client(auth=(kid, ksec)), kid, ksec
+    return razorpay_client(kid, ksec), kid, ksec
 
 
 def _api(method: str, path: str, json_body: dict | None = None) -> requests.Response:
