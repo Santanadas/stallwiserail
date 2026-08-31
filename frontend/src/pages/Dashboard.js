@@ -37,6 +37,7 @@ import {
   Copy,
   ChevronDown,
   Percent,
+  AlertTriangle,
 } from "lucide-react";
 import api, { formatApiError } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
@@ -45,6 +46,12 @@ import ImageUpload, { fileUrl } from "@/components/ImageUpload";
 import ProductEditor from "@/components/ProductEditor";
 import StoreQrModal from "@/components/StoreQrModal";
 import { useDocumentMeta } from "@/lib/useDocumentMeta";
+import Shell from "@/components/dash/Shell";
+import HomeSection from "@/components/dash/Home";
+import InsightsSection from "@/components/dash/Insights";
+import MoneySection from "@/components/dash/Money";
+import CustomersSection from "@/components/dash/Customers";
+import ShopSettings from "@/components/dash/ShopSettings";
 
 /* ==========================================================================
    SETTINGS — shared bits
@@ -646,6 +653,7 @@ function ProductsSection({
   showAddModal,
   setShowAddModal,
   products = [],
+  productsError = "",
   loadProducts,
 }) {
   const [editorOpen, setEditorOpen] = useState(false);
@@ -1000,7 +1008,24 @@ function ProductsSection({
         </div>
       )}
 
-      {filteredProducts.length === 0 && (
+      {filteredProducts.length === 0 && productsError && (
+        <div
+          data-testid="products-load-error"
+          className="rounded-2xl border border-dashed border-rose-200 bg-rose-50/40 p-12 text-center"
+        >
+          <AlertTriangle className="mx-auto h-10 w-10 text-rose-300" />
+          <h4 className="mt-3 text-sm font-bold text-[#0A0A0A]">Couldn't load your products</h4>
+          <p className="mt-1 text-xs text-neutral-600">{productsError}</p>
+          <p className="mt-1 text-xs text-neutral-500">
+            Your listings are safe — this is a connection problem, not an empty shop.
+          </p>
+          <Btn variant="outline" className="mt-4" onClick={loadProducts}>
+            Try again
+          </Btn>
+        </div>
+      )}
+
+      {filteredProducts.length === 0 && !productsError && (
         <div className="rounded-2xl border border-dashed border-neutral-200 p-12 text-center">
           <Package className="mx-auto h-10 w-10 text-neutral-300" />
           <h4 className="mt-3 font-bold text-[#0A0A0A] text-sm">No products found</h4>
@@ -1016,7 +1041,7 @@ function ProductsSection({
 /* ==========================================================================
    ORDER FULFILLMENT & PIPELINE SECTION
    ========================================================================== */
-function OrdersSection() {
+function OrdersSection({ onChanged }) {
   const [data, setData] = useState({ orders: [], total: 0, page: 1, pages: 1 });
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState("all");
@@ -1037,6 +1062,37 @@ function OrdersSection() {
   }, [load]);
 
   const orders = data.orders || [];
+  const readyToShip = orders.filter((o) => o.status === "paid");
+
+  const [shipping, setShipping] = useState(false);
+  const [shipMsg, setShipMsg] = useState(null);
+
+  /** Dispatch every paid order on this page in one request. Each still goes
+   *  through the normal ship path server-side, so delivery codes are generated
+   *  and emailed exactly as they are for a single order. */
+  const shipAll = async () => {
+    if (!readyToShip.length) return;
+    setShipping(true);
+    setShipMsg(null);
+    try {
+      const { data: res } = await api.post("/orders/bulk-ship", {
+        orderIds: readyToShip.map((o) => o.order_id),
+      });
+      const n = res.shipped?.length || 0;
+      setShipMsg({
+        tone: res.failed?.length ? "warning" : "success",
+        text: res.failed?.length
+          ? `Dispatched ${n}. ${res.failed.length} could not be shipped — open them individually.`
+          : `Dispatched ${n} order${n === 1 ? "" : "s"}. Delivery codes have gone out to the buyers.`,
+      });
+      await load();
+      onChanged?.();
+    } catch (e) {
+      setShipMsg({ tone: "error", text: formatApiError(e.response?.data?.detail) });
+    } finally {
+      setShipping(false);
+    }
+  };
 
   return (
     <Panel
@@ -1052,6 +1108,33 @@ function OrdersSection() {
       }
     >
       <div className="space-y-5">
+        {readyToShip.length > 0 && (
+          <div
+            data-testid="bulk-ship-bar"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-[#0A0A0A] px-4 py-3"
+          >
+            <div className="min-w-0">
+              <p className="text-[13px] font-bold text-white">
+                {readyToShip.length} order{readyToShip.length > 1 ? "s are" : " is"} paid and ready to pack
+              </p>
+              <p className="text-xs font-medium text-neutral-400">
+                Dispatching sends each buyer their delivery code.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={shipAll}
+              disabled={shipping}
+              data-testid="bulk-ship-btn"
+              className="shrink-0 rounded-lg bg-[#FF4F00] px-3.5 py-2 text-xs font-extrabold text-white transition-colors hover:bg-[#E04500] disabled:opacity-60"
+            >
+              {shipping ? "Dispatching…" : `Mark ${readyToShip.length} as shipped`}
+            </button>
+          </div>
+        )}
+
+        {shipMsg && <Note tone={shipMsg.tone}>{shipMsg.text}</Note>}
+
         {/* Status Filter Tabs */}
         <div className="flex gap-1.5 overflow-x-auto pb-1 text-xs font-bold scrollbar-none">
           {[
@@ -1377,35 +1460,32 @@ function SubscriptionSection({ onChange }) {
    MAIN EXECUTIVE DASHBOARD
    ========================================================================== */
 export default function Dashboard() {
-  const { user, logout, checkAuth } = useAuth();
+  const { user, logout, refreshUser } = useAuth();
   const [store, setStore] = useState(() => {
     try {
-      const cached = localStorage.getItem("stallwise_store");
-      return cached ? JSON.parse(cached) : null;
-    } catch {
-      return null;
-    }
+      const raw = localStorage.getItem("stallwise_store");
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
   });
   const [storeLoaded, setStoreLoaded] = useState(() => {
-    try {
-      return Boolean(localStorage.getItem("stallwise_store"));
-    } catch {
-      return false;
-    }
+    try { return Boolean(localStorage.getItem("stallwise_store")); } catch { return false; }
   });
   const [products, setProducts] = useState([]);
+  const [productsError, setProductsError] = useState("");
   const [orders, setOrders] = useState([]);
   const [orderCount, setOrderCount] = useState(0);
-  const [activeTab, setActiveTab] = useState("overview"); // 'overview' | 'products' | 'orders' | 'payouts' | 'settings'
+  const [summary, setSummary] = useState(null);
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const [summaryError, setSummaryError] = useState("");
+  const [activeTab, setActiveTab] = useState("home");
   const [viewMode, setViewMode] = useState("grid");
   const [showAddModal, setShowAddModal] = useState(false);
-  const [showQrModal, setShowQrModal] = useState(false);
   const [copied, setCopied] = useState(false);
   const navigate = useNavigate();
 
   useDocumentMeta({
-    title: "Executive Seller Suite | Stall Wise",
-    description: "Manage your storefront, catalog, order fulfillment, and direct payouts on Stall Wise.",
+    title: "Seller console | Stall Wise",
+    description: "Manage your storefront, orders, payouts and settings on Stall Wise.",
     path: "/dashboard",
   });
 
@@ -1415,17 +1495,23 @@ export default function Dashboard() {
       if (Array.isArray(data)) setProducts(data);
       else if (data?.products) setProducts(data.products);
       else setProducts([]);
-    } catch {
+      setProductsError("");
+    } catch (e) {
+      // Don't collapse a failed request into an empty catalogue — "you have no
+      // products" and "we couldn't reach the server" look identical to a seller
+      // and send them hunting for a bug in the wrong place.
       setProducts([]);
+      setProductsError(
+        formatApiError(e.response?.data?.detail) ||
+          "Couldn't load your products. Check your connection and try again."
+      );
     }
   }, []);
 
-  const loadStore = useCallback(async (updated, localOnly) => {
+  const loadStore = useCallback(async (updated) => {
     if (updated) {
       setStore(updated);
-      try {
-        localStorage.setItem("stallwise_store", JSON.stringify(updated));
-      } catch {}
+      try { localStorage.setItem("stallwise_store", JSON.stringify(updated)); } catch {}
       setStoreLoaded(true);
       return;
     }
@@ -1433,23 +1519,15 @@ export default function Dashboard() {
       const { data } = await api.get("/stores/me");
       if (data) {
         setStore(data);
-        try {
-          localStorage.setItem("stallwise_store", JSON.stringify(data));
-        } catch {}
+        try { localStorage.setItem("stallwise_store", JSON.stringify(data)); } catch {}
       } else {
-        // If server explicitly returns null (no store for this user)
         setStore(null);
-        try {
-          localStorage.removeItem("stallwise_store");
-        } catch {}
+        try { localStorage.removeItem("stallwise_store"); } catch {}
       }
     } catch (err) {
-      // Only set to null if backend returns a 404 (user legitimately has no store)
       if (err.response?.status === 404) {
         setStore(null);
-        try {
-          localStorage.removeItem("stallwise_store");
-        } catch {}
+        try { localStorage.removeItem("stallwise_store"); } catch {}
       }
     } finally {
       setStoreLoaded(true);
@@ -1466,11 +1544,35 @@ export default function Dashboard() {
     }
   }, []);
 
+  /** Every figure on Home, Insights and Payouts comes from here — one request,
+   *  computed server-side against all of the seller's rows rather than the
+   *  first page of orders. */
+  const loadSummary = useCallback(async () => {
+    setSummaryLoading(true);
+    try {
+      const { data } = await api.get("/dashboard/summary");
+      setSummary(data);
+      setSummaryError("");
+    } catch (e) {
+      setSummary(null);
+      setSummaryError(formatApiError(e.response?.data?.detail) || "");
+    } finally {
+      setSummaryLoading(false);
+    }
+  }, []);
+
+  const refreshAll = useCallback(() => {
+    loadProducts();
+    loadOrders();
+    loadSummary();
+  }, [loadProducts, loadOrders, loadSummary]);
+
   useEffect(() => {
     loadStore();
     loadProducts();
     loadOrders();
-  }, [loadStore, loadProducts, loadOrders]);
+    loadSummary();
+  }, [loadStore, loadProducts, loadOrders, loadSummary]);
 
   useEffect(() => {
     if (storeLoaded && store === null && user && !user?.hasStore) {
@@ -1478,530 +1580,91 @@ export default function Dashboard() {
     }
   }, [storeLoaded, store, user, navigate]);
 
-  const copyShopUrl = async () => {
-    if (!store) return;
-    const url = `https://stallwise.in/${store.slug}`;
-    if (navigator.clipboard) {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
-    }
+  const counts = useMemo(() => ({
+    toShip: summary?.queue?.toShip ?? 0,
+    products: products.length,
+    bankReady: summary?.queue?.bankReady,
+    isPro: summary?.metrics?.isPro ?? (user?.subscriptionStatus === "active"),
+    commissionRate: summary?.metrics?.commissionRate ?? 0.1,
+    commissionThisMonth: summary?.metrics?.commissionThisMonth ?? 0,
+    needsAttention:
+      (summary?.queue?.toShip ?? 0) +
+      (summary?.queue?.awaitingOtp ?? 0) +
+      (summary?.queue?.disputed ?? 0),
+    copied,
+    onCopied: () => { setCopied(true); setTimeout(() => setCopied(false), 2500); },
+  }), [summary, products.length, user?.subscriptionStatus, copied]);
+
+  const onLogout = async () => { await logout(); navigate("/login"); };
+
+  const HEADINGS = {
+    home: ["Home", store?.name ? `${store.name} · ${new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}` : ""],
+    orders: ["Orders", counts.toShip ? `${counts.toShip} paid order${counts.toShip > 1 ? "s" : ""} waiting to be packed` : "Everything is fulfilled"],
+    products: ["Products", `${products.length} listing${products.length === 1 ? "" : "s"}`],
+    customers: ["Customers", "People who have bought from you"],
+    insights: ["Insights", "What is selling, and to whom"],
+    payouts: ["Payouts", "Where your money is right now"],
+    settings: ["Settings", "Shop details, delivery, tax and alerts"],
   };
+  const [title, subtitle] = HEADINGS[activeTab] || HEADINGS.home;
 
-  // Executive Metrics Calculations
-  const metrics = useMemo(() => {
-    const isPro = user?.subscriptionStatus === "active";
-    const grossRevenue = orders.reduce((sum, o) => sum + (o.amount || 0), 0);
-    const completedOrders = orders.filter((o) => o.status === "completed" || o.status === "delivered").length;
-    const pendingFulfillment = orders.filter((o) => o.status === "paid" || o.status === "shipped").length;
-    const aov = orders.length > 0 ? Math.round(grossRevenue / orders.length) : 0;
-    const netPayout = isPro ? grossRevenue : Math.round(grossRevenue * 0.90);
-    const commissionPaidOrSaved = Math.round(grossRevenue * 0.10);
-
-    return {
-      grossRevenue,
-      netPayout,
-      totalOrders: orderCount,
-      completedOrders,
-      pendingFulfillment,
-      aov,
-      commissionPaidOrSaved,
-      isPro,
-    };
-  }, [orders, orderCount, user?.subscriptionStatus]);
-
-  // Real 7-Day Performance Trend
-  const performance7Days = useMemo(() => {
-    const days = [];
-    const now = new Date();
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date(now);
-      d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().split("T")[0];
-      const dayLabel = i === 0 ? "Today" : i === 1 ? "Yesterday" : d.toLocaleDateString("en-US", { weekday: "short" });
-
-      const dayOrders = orders.filter((o) => {
-        if (!o.created_at) return false;
-        try {
-          const od = new Date(o.created_at).toISOString().split("T")[0];
-          return od === dateStr;
-        } catch {
-          return false;
-        }
-      });
-
-      const revenue = dayOrders.reduce((sum, o) => sum + (o.amount || 0), 0);
-      days.push({
-        date: dateStr,
-        label: dayLabel,
-        orders: dayOrders.length,
-        revenue,
-      });
-    }
-
-    const maxRev = Math.max(...days.map((d) => d.revenue), 100);
-    return { days, maxRev };
-  }, [orders]);
-
-  if (!user || !storeLoaded) {
-    return (
-      <div className="mk min-h-screen bg-[#F8F9FA] flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <div className="h-8 w-8 animate-spin rounded-full border-3 border-neutral-300 border-t-[#FF4F00]" />
-          <span className="text-xs font-bold text-neutral-500 uppercase tracking-widest">Loading dashboard…</span>
-        </div>
-      </div>
-    );
-  }
+  const addProductBtn = (activeTab === "products" || activeTab === "home") && store ? (
+    <Btn variant="primary" className="h-9 !py-0" onClick={() => { setShowAddModal(true); setActiveTab("products"); }}>
+      <Plus className="h-4 w-4" /> Add product
+    </Btn>
+  ) : null;
 
   return (
-    <div className="mk min-h-screen bg-[#F8F9FA] text-[#0A0A0A]">
-      {/* QR Code Generator Modal */}
-      <StoreQrModal
-        isOpen={showQrModal}
-        onClose={() => setShowQrModal(false)}
-        storeName={store?.name}
-        storeSlug={store?.slug}
-      />
+    <Shell
+      store={store}
+      user={user}
+      active={activeTab}
+      onNav={setActiveTab}
+      counts={counts}
+      onLogout={onLogout}
+      title={title}
+      subtitle={subtitle}
+      action={addProductBtn}
+    >
+      {activeTab === "home" && (
+        <HomeSection summary={summary} loading={summaryLoading} error={summaryError} onRetry={loadSummary} orders={orders} onNav={setActiveTab} store={store} />
+      )}
 
-      {/* ====================================================================
-          TOPBAR
-          ==================================================================== */}
-      <header className="sticky top-0 z-40 border-b border-neutral-200/80 bg-white/90 backdrop-blur-md">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-3 min-w-0">
-            <Link to="/" className="mk-head text-lg font-black tracking-tight shrink-0" data-testid="dashboard-brand-logo">
-              STALL WISE<span className="text-[#FF4F00]">.</span>
-            </Link>
-            {store && (
-              <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50/70 px-2.5 py-1 text-xs font-bold text-emerald-800">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                Live
-              </span>
-            )}
-          </div>
+      {activeTab === "products" && (
+        <ProductsSection
+          hasStore={!!store}
+          viewMode={viewMode}
+          setViewMode={setViewMode}
+          showAddModal={showAddModal}
+          setShowAddModal={setShowAddModal}
+          products={products}
+          productsError={productsError}
+          loadProducts={refreshAll}
+        />
+      )}
 
-          <div className="flex items-center gap-2">
-            {store && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setShowQrModal(true)}
-                  className="hidden md:inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-bold text-neutral-700 hover:bg-neutral-50 transition-all"
-                  title="Store QR code"
-                >
-                  <QrCode className="h-3.5 w-3.5 text-[#FF4F00]" /> QR
-                </button>
-                <button
-                  type="button"
-                  onClick={copyShopUrl}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-bold text-neutral-700 hover:bg-neutral-50 transition-all"
-                >
-                  {copied ? (
-                    <><Check className="h-3.5 w-3.5 text-emerald-600" /><span className="text-emerald-700">Copied</span></>
-                  ) : (
-                    <><Copy className="h-3.5 w-3.5 text-neutral-500" /> Share</>
-                  )}
-                </button>
-                <Link
-                  to={`/${store.slug}`}
-                  target="_blank"
-                  className="inline-flex items-center gap-1 rounded-xl bg-neutral-900 px-3 py-1.5 text-xs font-bold text-white hover:bg-[#FF4F00] transition-all"
-                >
-                  Visit <ExternalLink className="h-3 w-3" />
-                </Link>
-              </>
-            )}
-            <button
-              onClick={async () => {
-                await logout();
-                navigate("/login");
-              }}
-              data-testid="logout-btn"
-              className="rounded-xl p-2 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 transition-colors"
-              title="Log out"
-            >
-              <LogOut className="h-4 w-4" />
-            </button>
+      {activeTab === "orders" && <OrdersSection onChanged={refreshAll} />}
+
+      {activeTab === "customers" && <CustomersSection summary={summary} orders={orders} loading={summaryLoading} />}
+
+      {activeTab === "insights" && <InsightsSection summary={summary} loading={summaryLoading} />}
+
+      {activeTab === "payouts" && (
+        <MoneySection summary={summary} loading={summaryLoading}>
+          <div className="flex flex-col gap-5">
+            <RouteSection onChange={refreshAll} />
+            <SubscriptionSection onChange={() => { refreshUser?.(); refreshAll(); }} />
           </div>
+        </MoneySection>
+      )}
+
+      {activeTab === "settings" && (
+        <div className="flex flex-col gap-5">
+          <StoreSection store={store} onChange={loadStore} user={user} refreshUser={refreshUser} />
+          <ShopSettings store={store} onSaved={loadStore} />
+          <AccountSection user={user} onLogout={onLogout} />
         </div>
-      </header>
-
-      {/* ====================================================================
-          STORE HEADER
-          ==================================================================== */}
-      <div className="border-b border-neutral-200/80 bg-white">
-        <div className="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-7 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
-          <div className="flex items-center gap-4">
-            <div className="relative shrink-0">
-              <div className="h-16 w-16 sm:h-20 sm:w-20 overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-100">
-                {user?.avatar ? (
-                  <img src={fileUrl(user.avatar)} alt={store?.name || "Store"} className="h-full w-full object-cover" />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center bg-neutral-900 text-white font-black text-xl">
-                    {store?.name?.slice(0, 2).toUpperCase() || "SW"}
-                  </div>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={() => setActiveTab("settings")}
-                className="absolute -bottom-1.5 -right-1.5 flex h-6 w-6 items-center justify-center rounded-lg bg-[#FF4F00] text-white shadow-sm hover:scale-105 transition-transform"
-                title="Edit store profile"
-              >
-                <Camera className="h-3 w-3" />
-              </button>
-            </div>
-            <div className="min-w-0">
-              <h1 className="mk-head text-xl sm:text-2xl font-black tracking-tight text-[#0A0A0A] truncate">
-                {store?.name || "My Store"}
-              </h1>
-              <p className="mt-0.5 text-xs text-neutral-500 font-mono truncate">
-                stallwise.in/<span className="text-[#FF4F00] font-bold">{store?.slug || "store"}</span>
-              </p>
-              {store?.bio && (
-                <p className="mt-1.5 text-xs text-neutral-600 line-clamp-2 max-w-xl">{store.bio}</p>
-              )}
-            </div>
-          </div>
-
-          <Btn
-            variant="primary"
-            onClick={() => {
-              setShowAddModal(true);
-              setActiveTab("products");
-            }}
-            className="shrink-0 self-start sm:self-auto"
-          >
-            <Plus className="h-4 w-4" /> Add Product
-          </Btn>
-        </div>
-      </div>
-
-      {/* ====================================================================
-          MAIN DASHBOARD BODY
-          ==================================================================== */}
-      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8">
-        {/* ================= EXECUTIVE KPI STATS BAR ================= */}
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {/* Card 1: Gross Sales Volume */}
-          <div className="overflow-hidden rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-2xs transition-all hover:shadow-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">Gross Volume</span>
-              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
-                <DollarSign className="h-4 w-4" />
-              </div>
-            </div>
-            <p className="mt-2 text-2xl sm:text-3xl font-black text-[#0A0A0A]">
-              ₹{metrics.grossRevenue.toLocaleString()}
-            </p>
-            <div className="mt-2 flex items-center gap-1.5 text-[11px] font-bold text-emerald-600">
-              <TrendingUp className="h-3.5 w-3.5" />
-              <span>{metrics.completedOrders} completed</span>
-              <span className="text-neutral-400 font-normal">· settled to bank</span>
-            </div>
-          </div>
-
-          {/* Card 2: Total Orders */}
-          <div className="overflow-hidden rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-2xs transition-all hover:shadow-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">Total Orders</span>
-              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
-                <ShoppingBag className="h-4 w-4" />
-              </div>
-            </div>
-            <p className="mt-2 text-2xl sm:text-3xl font-black text-[#0A0A0A]">
-              {metrics.totalOrders}
-            </p>
-            <div className="mt-2 flex items-center gap-1.5 text-[11px] font-bold text-blue-600">
-              <Clock className="h-3.5 w-3.5" />
-              <span>{metrics.pendingFulfillment} Pending Fulfillment</span>
-            </div>
-          </div>
-
-          {/* Card 3: Average Order Value */}
-          <div className="overflow-hidden rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-2xs transition-all hover:shadow-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">Average Order Value</span>
-              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-purple-50 text-purple-600">
-                <ArrowUpRight className="h-4 w-4" />
-              </div>
-            </div>
-            <p className="mt-2 text-2xl sm:text-3xl font-black text-[#0A0A0A]">
-              ₹{metrics.aov}
-            </p>
-            <div className="mt-2 text-[11px] text-neutral-500 font-medium">
-              Based on {metrics.totalOrders} customer transaction{metrics.totalOrders !== 1 ? "s" : ""}
-            </div>
-          </div>
-
-          {/* Card 4: Plan Monetization / Net Earnings */}
-          <div 
-            onClick={() => setActiveTab("payouts")}
-            className="cursor-pointer overflow-hidden rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-2xs transition-all hover:shadow-md hover:border-[#FF4F00]/30"
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">
-                {"Net Seller Payout"}
-              </span>
-              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-orange-50 text-[#FF4F00]">
-                <Percent className="h-4 w-4" />
-              </div>
-            </div>
-            <p className="mt-2 text-2xl sm:text-3xl font-black text-emerald-600">
-              ₹{metrics.netPayout.toLocaleString()}
-            </p>
-            <div className="mt-2 text-[11px] font-bold text-neutral-500">
-              {metrics.isPro ? "Full payout · Pro plan" : "After 10% commission · upgrade to keep 100% →"}
-            </div>
-          </div>
-        </div>
-
-        {/* ================= EXECUTIVE NAVIGATION TABS ================= */}
-        <div className="flex overflow-x-auto rounded-2xl border border-neutral-200 bg-white p-1.5 shadow-2xs scrollbar-none">
-          {[
-            { id: "overview", label: "Overview", icon: TrendingUp },
-            { id: "products", label: `Products (${products.length})`, icon: Package },
-            { id: "orders", label: `Orders (${orderCount})`, icon: ShoppingBag },
-            { id: "payouts", label: "Payouts & Plan", icon: CreditCard },
-            { id: "settings", label: "Settings", icon: Settings },
-          ].map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex flex-1 shrink-0 min-w-[140px] items-center justify-center gap-2 rounded-xl px-4 py-3 text-xs sm:text-sm font-bold transition-all ${
-                  isActive
-                    ? "bg-neutral-900 text-white shadow-sm"
-                    : "text-neutral-500 hover:text-neutral-900 hover:bg-neutral-50"
-                }`}
-              >
-                <Icon className={`h-4 w-4 ${isActive ? "text-[#FF4F00]" : "text-neutral-400"}`} />
-                <span>{tab.label}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* ================= TAB CONTENTS ================= */}
-        <div>
-          {/* TAB 1: EXECUTIVE OVERVIEW */}
-          {activeTab === "overview" && (
-            <div className="space-y-8">
-              {/* Activity Chart & Live Overview */}
-              <div className="grid gap-6 lg:grid-cols-3">
-                {/* 7-Day Performance Graph (2 cols) */}
-                <div className="lg:col-span-2 overflow-hidden rounded-2xl border border-neutral-200/90 bg-white p-6 shadow-2xs">
-                  <div className="flex items-center justify-between border-b border-neutral-100 pb-4">
-                    <div>
-                      <h3 className="font-bold text-[#0A0A0A] text-base">Store Performance Trend</h3>
-                      <p className="text-xs text-neutral-500">Live 7-day gross sales volume & order count</p>
-                    </div>
-                    <span className="rounded-full bg-emerald-50 border border-emerald-200 px-3 py-1 text-xs font-bold text-emerald-800 flex items-center gap-1.5">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                      Live Data
-                    </span>
-                  </div>
-
-                  {/* Visual SVG Activity Graph with Real Points */}
-                  <div className="my-6">
-                    <div className="relative h-44 w-full">
-                      <svg className="h-full w-full overflow-visible" viewBox="0 0 500 150">
-                        <defs>
-                          <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor="#FF4F00" stopOpacity="0.25" />
-                            <stop offset="100%" stopColor="#FF4F00" stopOpacity="0.0" />
-                          </linearGradient>
-                        </defs>
-                        {/* Horizontal Grid lines */}
-                        <line x1="0" y1="30" x2="500" y2="30" stroke="#f1f5f9" strokeWidth="1" strokeDasharray="3 3" />
-                        <line x1="0" y1="75" x2="500" y2="75" stroke="#f1f5f9" strokeWidth="1" strokeDasharray="3 3" />
-                        <line x1="0" y1="120" x2="500" y2="120" stroke="#f1f5f9" strokeWidth="1" />
-
-                        {(() => {
-                          const pts = performance7Days.days.map((d, idx) => {
-                            const x = Math.round((idx / 6) * 500);
-                            const ratio = performance7Days.maxRev > 0 ? d.revenue / performance7Days.maxRev : 0;
-                            const y = Math.round(120 - ratio * 90);
-                            return { x, y, ...d };
-                          });
-
-                          const pathD = pts.reduce((acc, p, idx) => {
-                            return idx === 0 ? `M ${p.x} ${p.y}` : `${acc} L ${p.x} ${p.y}`;
-                          }, "");
-
-                          const fillD = `${pathD} L 500 120 L 0 120 Z`;
-
-                          return (
-                            <>
-                              {/* Area fill */}
-                              <path d={fillD} fill="url(#chartGradient)" />
-                              {/* Trend line */}
-                              <path
-                                d={pathD}
-                                fill="none"
-                                stroke="#FF4F00"
-                                strokeWidth="3"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                              />
-                              {/* Data points */}
-                              {pts.map((p, idx) => (
-                                <g key={idx} className="group cursor-pointer">
-                                  <circle
-                                    cx={p.x}
-                                    cy={p.y}
-                                    r={idx === 6 ? 6 : 4.5}
-                                    fill={idx === 6 ? "#0A0A0A" : "#FF4F00"}
-                                    stroke="#ffffff"
-                                    strokeWidth="2"
-                                  />
-                                </g>
-                              ))}
-                            </>
-                          );
-                        })()}
-                      </svg>
-                    </div>
-
-                    {/* Day-by-Day Real Metric Cards */}
-                    <div className="grid grid-cols-7 gap-1 pt-3 border-t border-neutral-100 text-center">
-                      {performance7Days.days.map((d, idx) => (
-                        <div
-                          key={idx}
-                          className={`rounded-lg p-1.5 transition-colors ${
-                            idx === 6 ? "bg-neutral-900 text-white" : "hover:bg-neutral-50 text-neutral-600"
-                          }`}
-                        >
-                          <span className={`block text-[10px] font-bold ${idx === 6 ? "text-neutral-300" : "text-neutral-400"}`}>
-                            {d.label}
-                          </span>
-                          <span className={`block text-xs font-black mt-0.5 ${idx === 6 ? "text-white" : "text-[#0A0A0A]"}`}>
-                            ₹{d.revenue.toLocaleString()}
-                          </span>
-                          <span className={`block text-[9px] ${idx === 6 ? "text-emerald-400" : "text-neutral-400"}`}>
-                            {d.orders} ord
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Quick Action Shortcuts (1 col) */}
-                <div className="overflow-hidden rounded-2xl border border-neutral-200/90 bg-white p-6 shadow-2xs space-y-4">
-                  <h3 className="font-bold text-[#0A0A0A] text-base border-b border-neutral-100 pb-3">
-                    Merchant Quick Actions
-                  </h3>
-
-                  <button
-                    onClick={() => {
-                      setShowAddModal(true);
-                      setActiveTab("products");
-                    }}
-                    className="flex w-full items-center justify-between rounded-xl border border-neutral-100 bg-neutral-50/70 p-3.5 text-left transition-all hover:bg-neutral-100 hover:border-neutral-200"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#FF4F00]/10 text-[#FF4F00]">
-                        <Plus className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <span className="font-bold text-sm text-[#0A0A0A] block">Add New Product</span>
-                        <span className="text-xs text-neutral-500">List items with custom options</span>
-                      </div>
-                    </div>
-                    <ArrowUpRight className="h-4 w-4 text-neutral-400" />
-                  </button>
-
-                  <button
-                    onClick={() => setShowQrModal(true)}
-                    className="flex w-full items-center justify-between rounded-xl border border-neutral-100 bg-neutral-50/70 p-3.5 text-left transition-all hover:bg-neutral-100 hover:border-neutral-200"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
-                        <QrCode className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <span className="font-bold text-sm text-[#0A0A0A] block">Storefront QR Code</span>
-                        <span className="text-xs text-neutral-500">Download for Instagram / packaging</span>
-                      </div>
-                    </div>
-                    <ArrowUpRight className="h-4 w-4 text-neutral-400" />
-                  </button>
-
-                  <button
-                    onClick={() => setActiveTab("payouts")}
-                    className="flex w-full items-center justify-between rounded-xl border border-neutral-100 bg-neutral-50/70 p-3.5 text-left transition-all hover:bg-neutral-100 hover:border-neutral-200"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-50 text-purple-600">
-                        <Landmark className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <span className="font-bold text-sm text-[#0A0A0A] block">Payout Account</span>
-                        <span className="text-xs text-neutral-500">Manage bank settlement details</span>
-                      </div>
-                    </div>
-                    <ArrowUpRight className="h-4 w-4 text-neutral-400" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Products & Orders Overview Preview */}
-              <ProductsSection
-                hasStore={!!store}
-                viewMode={viewMode}
-                setViewMode={setViewMode}
-                showAddModal={showAddModal}
-                setShowAddModal={setShowAddModal}
-                products={products}
-                loadProducts={loadProducts}
-              />
-            </div>
-          )}
-
-          {/* TAB 2: PRODUCTS & CATALOG */}
-          {activeTab === "products" && (
-            <ProductsSection
-              hasStore={!!store}
-              viewMode={viewMode}
-              setViewMode={setViewMode}
-              showAddModal={showAddModal}
-              setShowAddModal={setShowAddModal}
-              products={products}
-              loadProducts={loadProducts}
-            />
-          )}
-
-          {/* TAB 3: ORDERS */}
-          {activeTab === "orders" && <OrdersSection />}
-
-          {/* TAB 4: PAYOUTS & PLAN */}
-          {activeTab === "payouts" && (
-            <div className="space-y-8">
-              <RouteSection onChange={loadStore} />
-              <SubscriptionSection user={user} onChange={checkAuth} />
-            </div>
-          )}
-
-          {/* TAB 5: SETTINGS */}
-          {activeTab === "settings" && (
-            <div className="space-y-5">
-              {store && (
-                <StoreSection
-                  store={store}
-                  onChange={loadStore}
-                  user={user}
-                  refreshUser={checkAuth}
-                />
-              )}
-              <AccountSection user={user} onLogout={async () => { await logout(); navigate("/login"); }} />
-            </div>
-          )}
-        </div>
-      </main>
-    </div>
+      )}
+    </Shell>
   );
 }

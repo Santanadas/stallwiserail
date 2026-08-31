@@ -72,20 +72,23 @@ SPA fallback are on the root app. Supporting modules:
   the platform key, so onboarding works end-to-end regardless.
 - **`storage.py`** — image uploads to the local filesystem (`backend/uploads/`), served
   back through `GET /api/files/{path}`. Note: internal names still say "marketo".
-
-**Auth flow:** `get_current_user` accepts a bearer token, `access_token` cookie, or
-Emergent Google `session_token` cookie, resolved by `_resolve_user`. Login and
-register are **two-step**: the endpoint returns `{pendingOtp, email, otpId}` and the
-client must call `/api/auth/verify-otp` before a session is issued. Successful auth
-sets httpOnly cookies **and** returns `token` in the JSON body (the SPA also persists
-it in `localStorage`/`sessionStorage`).
-
-**Order lifecycle:** `placed` → `paid` (Razorpay webhook `/api/webhooks/razorpay`, or
-`mock-pay`) → `shipped` (generates + emails delivery OTP) → `delivered` (seller enters
-buyer's OTP) → `completed`.
-
-### Frontend — `frontend/src/` (React 19 + Vite 6 + Tailwind v4)
-
+- **`ai_service.py`** — AI-written product descriptions for the seller's product
+  editor. Talks to any **OpenAI-compatible** chat-completions endpoint via the
+  `openai` SDK; defaults to `deepseek-ai/deepseek-v4-flash-0731` on NVIDIA NIM
+  (`AI_BASE_URL` / `AI_MODEL` to change provider, `NVIDIA_API_KEY` or `AI_API_KEY`
+  for the credential). Streaming, reasoning off (`AI_THINKING`) — the seller watches
+  it fill a textarea. **The default model is text-only, so `AI_VISION` defaults to
+  false and product photos are NOT sent**; the prompt then tells the model it cannot
+  see the item and must not invent an appearance. Turn `AI_VISION=true` on only with
+  a vision-capable `AI_MODEL`. **Optional by design:** with no key the module imports
+  fine, `enabled()` returns False, `GET /api/ai/status` reports it, and the UI hides
+  the button — nothing in it may raise at import time.
+  `POST /api/ai/product-description` streams server-sent events
+  (`{type: delta|done|error}`); because the response is already 200 when the model
+  call can fail, upstream failures arrive as an `error` event, not an HTTP status.
+  Only the seller's own uploaded image keys are ever read (`_own_upload_keys` in
+  `server.py`), reasoning deltas are dropped, and seller text is wrapped in
+  `<seller_input>` tags the system prompt tells the model to treat as data.
 - **Entry chain:** `index.html` → `src/main.tsx` → `@/App`. The `@` alias resolves to
   **`frontend/src/`** (see `vite.config.ts`), so `@/App` is `frontend/src/App.js`.
   **Dead files to ignore:** `src/App.tsx` (stub returning `<div/>`), `src/index.css`,
@@ -116,6 +119,29 @@ buyer's OTP) → `completed`.
 
 ## Gotchas
 
+- **Postgres was never actually exercised.** Three separate defects meant a
+  Postgres deployment silently failed and fell back to SQLite: (1) there was no
+  `CREATE TABLE` for Postgres at all — `_init_sqlite_schema` is SQLite-only and
+  `_pg_migrate` only ran ALTER/CREATE INDEX, so a fresh database had no tables;
+  (2) `_pg_to_sqlite` JSON-encoded list/dict parameters on the SQLite path only,
+  so every write touching `option_groups`/`images`/`payment_methods`/`address`/
+  `items` raised `DataError: expected str, got list` on Postgres; (3) each of
+  `fetch_one`/`fetch_all`/`fetch_val`/`execute` caught *any* Postgres error and
+  silently re-ran the query against SQLite, so a failed INSERT landed in a
+  different database than the next SELECT — the row was invisible immediately
+  and gone at restart. All three are fixed: `_PG_SCHEMA`, `encode_args()` on both
+  paths, and the per-query fallback now re-raises. **Run the suite against
+  Postgres** (`STALLWISE_TEST_PG=postgresql://... pytest`) — CI does.
+- **Never commit a `.db` file.** `backend/stallwise.db` was tracked in git, so
+  `COPY . .` baked it into the Docker image; on a restart the image's copy was
+  restored over live data. `*.db` is now in both `.gitignore` and `.dockerignore`
+  (the latter needs the `**/*.db` form — Docker patterns are path-relative).
+  `db.ephemeral_storage_warning()` reports when writes aren't landing anywhere
+  durable — including a configured-but-unreachable Postgres — and `/health`
+  surfaces it alongside `missingConfig`.
+- **Streaming endpoints must not be buffered.** `/api/ai/product-description` sets
+  `Cache-Control: no-cache, no-transform` and `X-Accel-Buffering: no`. A proxy that
+  buffers turns the live draft into one silent pause followed by a wall of text.
 - **Live Razorpay platform keys and a Brevo API key are hardcoded as fallbacks** in
   `server.py`, `route_service.py`, and `email_service.py` (env vars override them).
   Treat these as real secrets; don't echo them into logs, commits, or new files.

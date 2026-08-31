@@ -1,12 +1,51 @@
+# `COPY . .` copies the whole build context. Docker matches these patterns
+# against the full path from the context root, so nested files need a `**/`
+# form — a bare `*.db` would NOT exclude backend/stallwise.db.
+
+# Never ship a database into the image. A SQLite file baked into a layer is
+# restored over live data on every container restart, silently wiping
+# everything sellers have written since the last deploy.
+*.db
+**/*.db
+**/*.db-wal
+**/*.db-shm
+
+# Secrets
+.env
+.env.*
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pem
+**/*.key
+**/credentials.json
+**/*token.json*
+
+# Reinstalled inside the image; copying them wastes build time and can shadow
+# the correct platform-specific binaries.
 node_modules
-frontend/node_modules
-backend/node_modules
-backend/venv
+**/node_modules
+venv
+**/venv
 .venv
+**/.venv
 __pycache__
-*.pyc
+**/__pycache__
+**/*.pyc
+dist
+build
+
+# Local-only
 .git
 .github
 .gemini
-dist
-.env
+.vscode
+.idea
+.pytest_cache
+**/.pytest_cache
+.coverage
+coverage.xml
+htmlcov
+uploads
+**/uploads
+**/*.log

@@ -159,10 +159,11 @@ def test_delivery_otp_is_encrypted_at_rest(app_client, seller_with_store):
     seller_with_store.post(f"/api/orders/{oid}/ship")
     otp = app_client.get(f"/api/order/{oid}", params={"email": "bob@example.com"}).json()["otp"]
 
-    row = db._get_sqlite_conn().execute(
-        "SELECT otp_enc, otp_code_hash FROM orders WHERE order_id = ?", (oid,)).fetchone()
-    assert otp not in (row[0] or ""), "OTP must not be stored in plaintext"
-    assert otp not in (row[1] or "")
+    from tests.conftest import raw_fetch_one
+    row = raw_fetch_one("SELECT otp_enc, otp_code_hash FROM orders WHERE order_id = $1", oid)
+    assert row, "order row missing"
+    assert otp not in (row["otp_enc"] or ""), "OTP must not be stored in plaintext"
+    assert otp not in (row["otp_code_hash"] or ""), "the stored hash must not be the plaintext OTP"
 
 
 def test_protected_endpoints_require_auth(app_client):

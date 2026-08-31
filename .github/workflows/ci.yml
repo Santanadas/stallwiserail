@@ -21,6 +21,38 @@ jobs:
         working-directory: backend
         run: python -m pytest -q --cov=. --cov-report=term-missing --cov-config=/dev/null
 
+  backend-postgres:
+    name: Backend tests (PostgreSQL)
+    # Production runs on Postgres, so the suite has to run there too. A whole
+    # class of bug — Python lists bound to TEXT columns — passed every
+    # SQLite-only test and failed every write against Postgres.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: stallwise
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r backend/requirements-dev.txt
+      - name: Run tests against PostgreSQL
+        working-directory: backend
+        env:
+          STALLWISE_TEST_PG: postgresql://postgres:test@127.0.0.1:5432/stallwise
+        run: python -m pytest -q --cov-config=/dev/null
+
   frontend:
     name: Frontend typecheck & build
     runs-on: ubuntu-latest

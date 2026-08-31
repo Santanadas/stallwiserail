@@ -177,12 +177,11 @@ def test_order_auto_completes_once_window_passes(app_client, seller_with_store):
     seller_with_store.post(f"/api/orders/{oid}/confirm-delivery", json={"otp": otp})
 
     # Rewind the window rather than sleeping.
-    import db
     from datetime import datetime, timedelta, timezone
+
+    from tests.conftest import raw_execute
     past = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
-    conn = db._get_sqlite_conn()
-    with conn:
-        conn.execute("UPDATE orders SET window_expires_at = ? WHERE order_id = ?", (past, oid))
+    raw_execute("UPDATE orders SET window_expires_at = $1 WHERE order_id = $2", past, oid)
     assert seller_with_store.get(f"/api/orders/{oid}").json()["status"] == "completed"
 
 

@@ -8,8 +8,12 @@ import {
   ImagePlus,
   Loader2,
   GripVertical,
+  Sparkles,
+  Undo2,
+  Square,
 } from "lucide-react";
 import api, { formatApiError } from "@/lib/api";
+import { aiEnabled, streamProductDescription } from "@/lib/aiDescription";
 import { fileUrl } from "@/components/ImageUpload";
 import { Btn, Note } from "@/components/Kit";
 
@@ -166,6 +170,188 @@ function PhotoGrid({ images, setImages }) {
       </p>
       {err && <p className="mt-1 text-xs font-medium text-[#8A2200]">{err}</p>}
     </div>
+  );
+}
+
+/* ---------------- AI description writer ---------------- */
+/**
+ * Claude drafts the description from what the seller has already filled in —
+ * the photos, title, price and variants — plus anything extra they type here.
+ *
+ * Two things matter for trust: the previous text is always recoverable via
+ * Undo, and the draft is labelled as AI-written so nobody publishes an
+ * invented measurement without reading it first.
+ */
+function AiWriter({ form, onText, disabled }) {
+  const [available, setAvailable] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [extras, setExtras] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [previous, setPrevious] = useState(null);
+  const [produced, setProduced] = useState("");
+  const abortRef = useRef(null);
+
+  useEffect(() => {
+    let live = true;
+    aiEnabled().then((ok) => live && setAvailable(ok));
+    return () => {
+      live = false;
+      abortRef.current?.abort();
+    };
+  }, []);
+
+  if (!available) return null;
+
+  const hasTitle = Boolean(form.title.trim());
+
+  const generate = async () => {
+    if (!hasTitle) return setError("Add a title first — that's what the draft is built from.");
+    setError("");
+    setBusy(true);
+    // Snapshot in a local: `previous` is still last run's value in this closure.
+    const snapshot = form.description;
+    setPrevious(snapshot);
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    let streamed = "";
+    try {
+      await streamProductDescription(
+        {
+          title: form.title.trim(),
+          description: form.description.trim(),
+          keywords: extras.trim(),
+          price: form.price ? Number(form.price) : null,
+          stock: form.stock === "" ? null : Number(form.stock),
+          images: form.images,
+          optionGroups: form.groups
+            .filter((g) => g.name.trim())
+            .map((g) => ({
+              name: g.name.trim(),
+              options: g.options
+                .filter((o) => o.label.trim())
+                .map((o) => ({ label: o.label.trim(), priceDelta: Number(o.priceDelta || 0) })),
+            }))
+            .filter((g) => g.options.length),
+        },
+        {
+          signal: controller.signal,
+          onDelta: (text) => {
+            streamed = text;
+            onText(text);
+          },
+        }
+      );
+      setProduced(streamed);
+      setOpen(false);
+    } catch (e) {
+      if (e.name === "AbortError") {
+        // Stopped on purpose — keep whatever arrived, and let Undo reach back
+        // past it. Nothing arrived means nothing changed, so drop the snapshot.
+        if (streamed) setProduced(streamed);
+        else setPrevious(null);
+      } else {
+        onText(snapshot);
+        setPrevious(null);
+        setError(e.message || "Couldn't write that one. Try again.");
+      }
+    } finally {
+      abortRef.current = null;
+      setBusy(false);
+    }
+  };
+
+  const undo = () => {
+    onText(previous || "");
+    setPrevious(null);
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        data-testid="ai-write-btn"
+        onClick={() => (busy ? abortRef.current?.abort() : setOpen((v) => !v))}
+        disabled={disabled && !busy}
+        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-[#FF4F00]/30 bg-[#FF4F00]/[0.06] px-2.5 py-1 text-[11px] font-bold text-[#C43D00] transition-colors hover:bg-[#FF4F00]/[0.12] disabled:opacity-50"
+      >
+        {busy ? (
+          <>
+            <Square className="h-3 w-3 fill-current" /> Stop
+          </>
+        ) : (
+          <>
+            <Sparkles className="h-3.5 w-3.5" />
+            {form.description.trim() ? "Rewrite with AI" : "Write with AI"}
+          </>
+        )}
+      </button>
+
+      {open && !busy && (
+        <div
+          data-testid="ai-panel"
+          className="mb-2 w-full rounded-xl border border-[#FF4F00]/25 bg-[#FF4F00]/[0.04] p-3.5"
+        >
+          <p className="text-xs text-neutral-600">
+            It reads your photos, title, price and variants. Add anything else worth
+            mentioning — it won't invent details you haven't given it.
+          </p>
+          <input
+            data-testid="ai-extras"
+            className={`${inputCls} mt-2.5 bg-white py-2`}
+            placeholder="100% cotton · 40 × 150 cm · machine wash cold"
+            value={extras}
+            maxLength={300}
+            onChange={(e) => setExtras(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), generate())}
+          />
+          <div className="mt-2.5 flex items-center gap-2">
+            <button
+              type="button"
+              data-testid="ai-generate-btn"
+              onClick={generate}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[#FF4F00] px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-[#E04500]"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              {form.description.trim() ? "Rewrite it" : "Write it"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="rounded-lg px-2.5 py-1.5 text-xs font-bold text-neutral-500 hover:text-neutral-800"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {busy && (
+        <p className="mb-2 flex w-full items-center gap-2 text-xs font-medium text-neutral-500">
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-[#FF4F00]" />
+          Writing…
+        </p>
+      )}
+
+      {error && <p className="mb-2 w-full text-xs font-medium text-[#8A2200]">{error}</p>}
+
+      {previous !== null && !busy && form.description === produced && (
+        <div className="mt-1.5 flex w-full flex-wrap items-center justify-between gap-2 rounded-lg bg-neutral-100 px-2.5 py-1.5">
+          <span className="text-[11px] text-neutral-500">
+            AI draft — check the details before you publish.
+          </span>
+          <button
+            type="button"
+            data-testid="ai-undo-btn"
+            onClick={undo}
+            className="inline-flex items-center gap-1 text-[11px] font-bold text-neutral-700 hover:text-[#FF4F00]"
+          >
+            <Undo2 className="h-3 w-3" /> Undo
+          </button>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -336,7 +522,14 @@ export default function ProductEditor({ open, product, onClose, onSaved }) {
                 />
               </div>
               <div>
-                <label className={labelCls}>Description</label>
+                <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                  <label className={`${labelCls} mb-0`}>Description</label>
+                  <AiWriter
+                    form={form}
+                    onText={(text) => set("description", text)}
+                    disabled={saving}
+                  />
+                </div>
                 <textarea
                   data-testid="product-desc"
                   rows={4}

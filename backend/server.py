@@ -21,6 +21,7 @@ import httpx
 import razorpay
 from fastapi import FastAPI, APIRouter, Request, Response, HTTPException, Depends, Query, UploadFile, File
 from starlette.middleware.cors import CORSMiddleware
+from starlette.responses import StreamingResponse
 from pydantic import BaseModel, EmailStr, Field
 
 import db
@@ -29,6 +30,7 @@ import email_service
 import storage
 import route_service
 import seo
+import ai_service
 
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 PREMIUM_TIER = "Stall Wise Pro"
@@ -38,6 +40,9 @@ COMMISSION_RATE_PRO = 0.10
 # "online" = Razorpay checkout (UPI, cards, netbanking, wallets).
 # "cod"    = cash collected by the seller on delivery.
 PAYMENT_METHODS = ("online", "cod")
+
+# A product at or below this many units shows up in the dashboard action queue.
+LOW_STOCK_THRESHOLD = 3
 DEFAULT_WINDOW_MIN = 120
 OTP_EXPIRY_MIN = 4320  # 3 days
 OTP_MAX_ATTEMPTS = 5
@@ -135,6 +140,14 @@ class StoreUpdateIn(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=100)
     bio: Optional[str] = Field(default=None, max_length=500)
     acceptanceWindowMinutes: Optional[int] = Field(default=None, ge=1, le=10080)
+    deliveryFee: Optional[float] = Field(default=None, ge=0, le=100000)
+    freeDeliveryAbove: Optional[float] = Field(default=None, ge=0, le=10000000)
+    dispatchDays: Optional[int] = Field(default=None, ge=0, le=60)
+    gstin: Optional[str] = Field(default=None, max_length=20)
+    hsnCode: Optional[str] = Field(default=None, max_length=12)
+    notifyNewOrder: Optional[bool] = None
+    notifyDailySummary: Optional[bool] = None
+    notifyWeeklyDigest: Optional[bool] = None
 
 
 class RouteOnboardIn(BaseModel):
@@ -174,6 +187,21 @@ class ProductIn(BaseModel):
     image: Optional[str] = Field(default=None, max_length=500)
     images: List[str] = Field(default_factory=list, max_length=8)
     paymentMethods: List[str] = Field(default_factory=lambda: ["online"], max_length=4)
+
+
+class AIDescribeIn(BaseModel):
+    """Whatever the seller has filled in so far, so Claude can write from it."""
+    title: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=2000)
+    keywords: str = Field(default="", max_length=300)
+    price: Optional[float] = Field(default=None, gt=0, le=10000000.0)
+    stock: Optional[int] = Field(default=None, ge=0, le=100000)
+    images: List[str] = Field(default_factory=list, max_length=8)
+    optionGroups: List[OptionGroupIn] = Field(default_factory=list, max_length=5)
+
+
+class BulkOrderIn(BaseModel):
+    orderIds: List[str] = Field(min_length=1, max_length=50)
 
 
 class OrderItemIn(BaseModel):
@@ -268,6 +296,14 @@ def public_store(s: Optional[dict]) -> Optional[dict]:
         "bio": s.get("bio") or "",
         "logo": s.get("logo"),
         "acceptanceWindowMinutes": s.get("acceptance_window_minutes") or s.get("acceptanceWindowMinutes", DEFAULT_WINDOW_MIN),
+        "deliveryFee": float(s.get("delivery_fee") or 0),
+        "freeDeliveryAbove": (float(s["free_delivery_above"]) if s.get("free_delivery_above") is not None else None),
+        "dispatchDays": (s.get("dispatch_days") if s.get("dispatch_days") is not None else 2),
+        "gstin": s.get("gstin") or "",
+        "hsnCode": s.get("hsn_code") or "",
+        "notifyNewOrder": bool(s.get("notify_new_order", True)),
+        "notifyDailySummary": bool(s.get("notify_daily_summary", False)),
+        "notifyWeeklyDigest": bool(s.get("notify_weekly_digest", False)),
         "created_at": s["created_at"],
     }
 
@@ -754,6 +790,21 @@ async def update_store(body: StoreUpdateIn, user=Depends(get_current_user)):
         updates.append(f"acceptance_window_minutes = ${idx}")
         values.append(body.acceptanceWindowMinutes)
         idx += 1
+    for field, column, clean in (
+        ("deliveryFee", "delivery_fee", float),
+        ("freeDeliveryAbove", "free_delivery_above", float),
+        ("dispatchDays", "dispatch_days", int),
+        ("gstin", "gstin", lambda v: security.sanitize_text(v, 20).upper()),
+        ("hsnCode", "hsn_code", lambda v: security.sanitize_text(v, 12)),
+        ("notifyNewOrder", "notify_new_order", bool),
+        ("notifyDailySummary", "notify_daily_summary", bool),
+        ("notifyWeeklyDigest", "notify_weekly_digest", bool),
+    ):
+        val = getattr(body, field)
+        if val is not None:
+            updates.append(f"{column} = ${idx}")
+            values.append(clean(val))
+            idx += 1
 
     if updates:
         values.append(store["store_id"])
@@ -1146,6 +1197,265 @@ async def delete_product(product_id: str, user=Depends(get_current_user)):
     await db.execute("DELETE FROM products WHERE product_id = $1 AND seller_id = $2",
                      product_id, user["user_id"])
     return {"ok": True}
+
+
+# ======================= Dashboard summary =======================
+def _month_key(dt) -> str:
+    return f"{dt.year:04d}-{dt.month:02d}"
+
+
+@api.get("/dashboard/summary")
+async def dashboard_summary(user=Depends(get_current_user)):
+    """Every figure the dashboard shows, computed from this seller's own rows.
+
+    One round trip instead of the client pulling orders and products and doing
+    the arithmetic itself — which it cannot do correctly anyway, because
+    /orders is paginated.
+    """
+    store = await get_my_store(user)
+    if not store:
+        raise HTTPException(status_code=400, detail="Create a store first")
+
+    order_rows = await db.fetch_all(
+        "SELECT * FROM orders WHERE seller_id = $1 ORDER BY created_at DESC LIMIT 2000",
+        user["user_id"])
+    product_rows = await db.fetch_all(
+        "SELECT * FROM products WHERE seller_id = $1 ORDER BY created_at DESC LIMIT 500",
+        user["user_id"])
+    orders = [public_order(o) for o in order_rows]
+    products = [public_product(p) for p in product_rows]
+
+    sub_status = await effective_sub_status(user)
+    is_pro = sub_status == "active"
+    rate = COMMISSION_RATE_PRO if is_pro else COMMISSION_RATE_FREE
+
+    now_dt = now()
+    this_month, last_month = _month_key(now_dt), _month_key(
+        (now_dt.replace(day=1) - timedelta(days=1)))
+
+    # Money that has actually been earned: paid onwards, disputes excluded.
+    EARNED = ("paid", "shipped", "delivered", "completed")
+
+    def bucket(o):
+        d = parse_dt(o.get("created_at"))
+        return _month_key(d) if d else ""
+
+    gross_this = sum(o["amount"] for o in orders if o["status"] in EARNED and bucket(o) == this_month)
+    gross_last = sum(o["amount"] for o in orders if o["status"] in EARNED and bucket(o) == last_month)
+    n_this = sum(1 for o in orders if bucket(o) == this_month)
+    n_last = sum(1 for o in orders if bucket(o) == last_month)
+
+    # Action queue — the things that need the seller today.
+    to_ship = [o for o in orders if o["status"] == "paid"]
+    awaiting_otp = [o for o in orders if o["status"] == "shipped"]
+    disputed = [o for o in orders if o["status"] == "disputed"]
+    low_stock = [p for p in products
+                 if p["stock"] is not None and 0 < p["stock"] <= LOW_STOCK_THRESHOLD]
+    out_of_stock = [p for p in products if p["stock"] == 0]
+
+    # Where the money sits.
+    held = sum(o["amount"] for o in orders
+               if o["status"] in ("paid", "shipped") and o["paymentMethod"] != "cod")
+    cash_collected = sum(o["amount"] for o in orders
+                         if o["paymentMethod"] == "cod" and o["status"] in ("delivered", "completed"))
+    settled = sum(o["amount"] for o in orders
+                  if o["status"] == "completed" and o["paymentMethod"] != "cod")
+
+    # Revenue per day, last 30 days, zero-filled so the chart has no gaps.
+    days, day_index = [], {}
+    for i in range(29, -1, -1):
+        d = (now_dt - timedelta(days=i)).date().isoformat()
+        day_index[d] = len(days)
+        days.append({"date": d, "amount": 0.0, "orders": 0})
+    for o in orders:
+        dt = parse_dt(o.get("created_at"))
+        if not dt or o["status"] not in EARNED:
+            continue
+        slot = day_index.get(dt.date().isoformat())
+        if slot is not None:
+            days[slot]["amount"] += o["amount"]
+            days[slot]["orders"] += 1
+
+    # Aggregates over earned orders.
+    by_product, by_method, by_city, buyers = {}, {}, {}, {}
+    for o in orders:
+        if o["status"] not in EARNED:
+            continue
+        for it in (o.get("items") or []):
+            key = it.get("productId") or it.get("title")
+            e = by_product.setdefault(key, {"title": it.get("title") or "Product",
+                                            "units": 0, "revenue": 0.0})
+            qty = int(it.get("quantity") or 0)
+            e["units"] += qty
+            e["revenue"] += float(it.get("unitPrice") or 0) * qty
+        by_method[o["paymentMethod"]] = by_method.get(o["paymentMethod"], 0) + 1
+        city = ((o.get("address") or {}).get("city") or "").strip()
+        if city:
+            by_city[city] = by_city.get(city, 0) + 1
+        em = (o.get("buyerEmail") or "").lower()
+        if em:
+            b = buyers.setdefault(em, {"orders": 0, "spend": 0.0, "name": o.get("buyerName") or "",
+                                       "city": city, "lastAt": o.get("created_at")})
+            b["orders"] += 1
+            b["spend"] += o["amount"]
+
+    top = lambda d, k: sorted(d, key=k, reverse=True)
+    repeat = sum(1 for b in buyers.values() if b["orders"] > 1)
+
+    route = await db.fetch_one("SELECT status FROM seller_routes WHERE seller_id = $1", user["user_id"])
+    bank_ready = bool(route and route.get("status") in ("activated", "created", "mock"))
+
+    return {
+        "generatedAt": iso(now_dt),
+        "queue": {
+            "toShip": len(to_ship),
+            "toShipValue": round(sum(o["amount"] for o in to_ship), 2),
+            "oldestToShipAt": (to_ship[-1]["created_at"] if to_ship else None),
+            "awaitingOtp": len(awaiting_otp),
+            "disputed": len(disputed),
+            "lowStock": len(low_stock),
+            "outOfStock": len(out_of_stock),
+            "lowStockTitles": [p["title"] for p in (low_stock + out_of_stock)[:4]],
+            "bankReady": bank_ready,
+        },
+        "metrics": {
+            "grossThisMonth": round(gross_this, 2),
+            "grossLastMonth": round(gross_last, 2),
+            "ordersThisMonth": n_this,
+            "ordersLastMonth": n_last,
+            "aov": round(gross_this / max(1, sum(1 for o in orders if o["status"] in EARNED and bucket(o) == this_month)), 2) if gross_this else 0,
+            "commissionRate": rate,
+            "netThisMonth": round(gross_this * (1 - rate), 2),
+            "commissionThisMonth": round(gross_this * rate, 2),
+            "isPro": is_pro,
+            "totalOrders": len(orders),
+            "repeatBuyers": repeat,
+            "uniqueBuyers": len(buyers),
+            "disputeRate": round(len(disputed) / len(orders) * 100, 1) if orders else 0.0,
+        },
+        "money": {
+            "held": round(held, 2),
+            "heldNet": round(held * (1 - rate), 2),
+            "cashCollected": round(cash_collected, 2),
+            "cashCommissionOwed": round(cash_collected * rate, 2),
+            "settled": round(settled, 2),
+            "disputedValue": round(sum(o["amount"] for o in disputed), 2),
+        },
+        "daily": days,
+        "topProducts": [
+            {"title": v["title"], "units": v["units"], "revenue": round(v["revenue"], 2)}
+            for v in top(by_product.values(), lambda v: v["revenue"])[:5]
+        ],
+        "paymentMix": [{"method": k, "orders": v}
+                       for k, v in top(by_method.items(), lambda kv: kv[1])[:5]],
+        "topCities": [{"city": k, "orders": v}
+                      for k, v in top(by_city.items(), lambda kv: kv[1])[:5]],
+        "customers": [
+            {"email": em, "name": b["name"], "city": b["city"], "orders": b["orders"],
+             "spend": round(b["spend"], 2), "lastAt": b["lastAt"]}
+            for em, b in top(buyers.items(), lambda kv: kv[1]["spend"])[:50]
+        ],
+        "counts": {
+            "products": len(products),
+            "liveProducts": sum(1 for p in products if p["active"]),
+            "draftProducts": sum(1 for p in products if not p["active"]),
+            "byStatus": {st: sum(1 for o in orders if o["status"] == st)
+                         for st in ("placed", "paid", "shipped", "delivered", "completed", "disputed")},
+        },
+        "health": {
+            "bankVerified": bank_ready,
+            "hasBio": bool((store.get("bio") or "").strip()),
+            "hasProducts": len(products) > 0,
+            "hasProductImages": any(p["images"] for p in products),
+            "codEnabled": any("cod" in p["paymentMethods"] for p in products),
+            "hasGstin": bool((store.get("gstin") or "").strip()),
+        },
+    }
+
+
+@api.post("/orders/bulk-ship")
+async def bulk_ship(body: BulkOrderIn, user=Depends(get_current_user)):
+    """Dispatch several orders at once. Each is shipped through the same path as
+    the single-order route, so delivery OTPs still get generated and emailed."""
+    done, failed = [], []
+    for oid in body.orderIds:
+        try:
+            await ship_order(oid, user)
+            done.append(oid)
+        except HTTPException as exc:
+            failed.append({"orderId": oid, "reason": exc.detail})
+    return {"shipped": done, "failed": failed}
+
+
+
+# ======================= AI copywriting =======================
+def _own_upload_keys(user_id: str, paths: List[str]) -> List[str]:
+    """Keep only images this seller uploaded themselves.
+
+    storage.build_path writes to "<app>/uploads/<user_id>/<uuid>.<ext>", so the
+    owner is in the key. Anything else — another seller's key, a remote URL — is
+    dropped rather than fetched and billed for.
+    """
+    prefix = f"/uploads/{user_id}/"
+    return [
+        p for p in paths
+        if p and security.is_safe_image_path(p) and prefix in p and not p.startswith(("http://", "https://"))
+    ]
+
+
+@api.get("/ai/status")
+async def ai_status(user=Depends(get_current_user)):
+    """Lets the product editor hide the button when no API key is configured."""
+    return {"enabled": ai_service.enabled()}
+
+
+@api.post("/ai/product-description")
+async def ai_product_description(body: AIDescribeIn, request: Request,
+                                 user=Depends(get_current_user)):
+    """Stream a product description as Claude writes it (server-sent events)."""
+    if not ai_service.enabled():
+        raise HTTPException(status_code=503,
+                            detail="AI descriptions aren't switched on for this site yet.")
+
+    # Every call costs money and reads up to three images, so cap it per seller
+    # rather than per IP — a shared office should not throttle everyone.
+    if not security.check_rate_limit(f"ai_desc:{user['user_id']}", max_requests=40, window_seconds=3600):
+        raise HTTPException(status_code=429,
+                            detail="You've used this hour's AI drafts. Try again shortly.")
+
+    store = await get_my_store(user)
+
+    async def events():
+        try:
+            async for chunk in ai_service.stream_description(
+                images=_own_upload_keys(user["user_id"], body.images),
+                title=body.title,
+                price=body.price,
+                stock=body.stock,
+                keywords=body.keywords,
+                existing=body.description,
+                option_groups=[g.model_dump() for g in body.optionGroups],
+                store_name=(store or {}).get("name") or "",
+                store_bio=(store or {}).get("bio") or "",
+            ):
+                yield f"data: {json.dumps({'type': 'delta', 'text': chunk})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except ai_service.AIUnavailable as exc:
+            # Headers are already out by now, so the error has to travel as an
+            # event rather than an HTTP status.
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("ai description stream failed")
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Something went wrong writing that. Try again.'})}\n\n"
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+    )
+
 
 
 # ======================= Orders =======================
@@ -1672,7 +1982,25 @@ async def verify_subscription_payment(body: PayVerifyIn, user=Depends(get_curren
 
 @app.api_route("/health", methods=["GET", "HEAD"])
 async def health_check():
-    return {"status": "ok", "service": "stallwise", "db": bool(db._pool)}
+    """Reports config problems that don't stop the app but do lose data or
+    disable features — visible without shell access to the container."""
+    out = {
+        "status": "ok",
+        "service": "stallwise",
+        "db": bool(db._pool),
+        "engine": "postgres" if db._pool else "sqlite",
+    }
+    warning = db.ephemeral_storage_warning()
+    if warning:
+        out["status"] = "degraded"
+        out["warning"] = warning
+    missing = [k for k in ("ENCRYPTION_KEY", "JWT_SECRET", "RAZORPAY_KEY_ID",
+                           "RAZORPAY_KEY_SECRET", "BREVO_API_KEY")
+               if not (os.environ.get(k) or "").strip()]
+    if missing:
+        out["status"] = "degraded"
+        out["missingConfig"] = missing
+    return out
 
 
 @api.api_route("/", methods=["GET", "HEAD"])

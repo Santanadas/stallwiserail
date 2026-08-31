@@ -65,6 +65,9 @@ chainlit.md
 
 # Data and databases
 agenthub/agents/youtube/db
+# A committed SQLite file gets baked into the Docker image and restored over
+# live data on every container restart. Never track one.
+*.db
 *.db-wal
 *.db-shm
 
@@ -98,3 +101,6 @@ credentials.json
 coverage.xml
 htmlcov/
 .pytest_cache/
+
+# Generated design canvas — 2.7MB of baked editor, rebuilt by design/seller-console/build.py
+design/seller-console/*-console.html

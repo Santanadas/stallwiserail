@@ -29,7 +29,7 @@ os.environ.update(
     }
 )
 for leak in ("DATABASE_URL", "POSTGRES_URL", "SUPABASE_DB_URL", "BREVO_API_KEY",
-             "SENDINBLUE_API_KEY", "RAZORPAY_WEBHOOK_SECRET"):
+             "SENDINBLUE_API_KEY", "RAZORPAY_WEBHOOK_SECRET", "ANTHROPIC_API_KEY"):
     os.environ.pop(leak, None)
 
 PLATFORM_SECRET = os.environ["RAZORPAY_KEY_SECRET"]
@@ -74,9 +74,100 @@ def webhook_signature(body: bytes, secret: str) -> str:
     return hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
 
 
+# Set STALLWISE_TEST_PG to a PostgreSQL URL to run the whole suite against
+# Postgres instead of SQLite. The production incident where published products
+# vanished was a Postgres-only bug (lists bound to TEXT columns) that every
+# SQLite-only test passed straight through — so this needs to be exercisable.
+#
+#   podman run -d --rm -e POSTGRES_PASSWORD=test -e POSTGRES_DB=stallwise \
+#       -p 55432:5432 postgres:16-alpine
+#   STALLWISE_TEST_PG=postgresql://postgres:test@127.0.0.1:55432/stallwise pytest
+TEST_PG_URL = (os.environ.get("STALLWISE_TEST_PG") or "").strip()
+
+_PG_TABLES = ("users", "pending_otps", "login_attempts", "password_reset_tokens",
+              "user_sessions", "stores", "products", "orders", "seller_routes",
+              "seller_gateways", "platform_plans")
+
+
+def _reset_pg_schema():
+    """Create the schema if absent, then empty every table."""
+    import asyncio
+
+    import asyncpg as _asyncpg
+
+    import db as _db
+
+    async def _run():
+        conn = await _asyncpg.connect(TEST_PG_URL)
+        try:
+            await conn.execute(_db._PG_SCHEMA)
+            await conn.execute(
+                "TRUNCATE " + ", ".join(_PG_TABLES) + " RESTART IDENTITY CASCADE")
+        finally:
+            await conn.close()
+
+    asyncio.run(_run())
+
+
+def raw_execute(query: str, *args):
+    """Run a statement against whichever engine the suite is using.
+
+    Tests that need to reach past the API — rewinding a timestamp, inspecting
+    ciphertext at rest — must not hardcode `db._get_sqlite_conn()`, or they
+    silently write to a database the app isn't reading. Write the query in
+    Postgres dialect ($1, $2), same rule as the application code.
+    """
+    import db as _db
+
+    if TEST_PG_URL:
+        import asyncio
+
+        import asyncpg as _asyncpg
+
+        async def _run():
+            conn = await _asyncpg.connect(TEST_PG_URL)
+            try:
+                await conn.execute(query, *_db.encode_args(args))
+            finally:
+                await conn.close()
+
+        return asyncio.run(_run())
+
+    conn = _db._get_sqlite_conn()
+    q, a = _db._pg_to_sqlite(query, args)
+    with conn:
+        conn.execute(q, a)
+
+
+def raw_fetch_one(query: str, *args):
+    """Read a row straight from the active engine. Returns a dict or None."""
+    import db as _db
+
+    if TEST_PG_URL:
+        import asyncio
+
+        import asyncpg as _asyncpg
+
+        async def _run():
+            conn = await _asyncpg.connect(TEST_PG_URL)
+            try:
+                row = await conn.fetchrow(query, *_db.encode_args(args))
+                return dict(row) if row else None
+            finally:
+                await conn.close()
+
+        return asyncio.run(_run())
+
+    conn = _db._get_sqlite_conn()
+    q, a = _db._pg_to_sqlite(query, args)
+    cur = conn.cursor()
+    cur.execute(q, a)
+    return _db._row_to_dict(cur.fetchone())
+
+
 @pytest.fixture()
 def app_client(tmp_path, monkeypatch):
-    """A TestClient bound to a fresh SQLite database."""
+    """A TestClient bound to a fresh database (SQLite by default)."""
     import db
     import route_service
     import security
@@ -86,12 +177,18 @@ def app_client(tmp_path, monkeypatch):
     # leaks between tests and eventually 429s the whole suite. Reset it.
     security._rate_limits.clear()
 
-    # Fresh, isolated database + upload dir for this test.
-    monkeypatch.setattr(db, "DB_FILE", tmp_path / "test.db", raising=False)
-    monkeypatch.setattr(db, "_sqlite_conn", None, raising=False)
-    monkeypatch.setattr(db, "_pool", None, raising=False)
-    monkeypatch.setattr(db, "_ENGINE", "sqlite", raising=False)
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+
+    if TEST_PG_URL:
+        monkeypatch.setenv("DATABASE_URL", TEST_PG_URL)
+        monkeypatch.setattr(db, "_pool", None, raising=False)
+        monkeypatch.setattr(db, "_ENGINE", "sqlite", raising=False)
+    else:
+        # Fresh, isolated SQLite file for this test.
+        monkeypatch.setattr(db, "DB_FILE", tmp_path / "test.db", raising=False)
+        monkeypatch.setattr(db, "_sqlite_conn", None, raising=False)
+        monkeypatch.setattr(db, "_pool", None, raising=False)
+        monkeypatch.setattr(db, "_ENGINE", "sqlite", raising=False)
 
     # Never touch the real Razorpay API.
     _fake = FakeRazorpay()
@@ -101,7 +198,18 @@ def app_client(tmp_path, monkeypatch):
 
     from fastapi.testclient import TestClient
 
+    if TEST_PG_URL:
+        # Isolate this test. Done on a standalone connection before the app
+        # starts: the app's pool is bound to the TestClient's event loop and
+        # cannot be driven from another one.
+        _reset_pg_schema()
+
     with TestClient(server.app) as client:
+        if TEST_PG_URL:
+            assert db._ENGINE == "postgres", (
+                f"STALLWISE_TEST_PG is set but the app fell back to SQLite: "
+                f"{db._last_db_error}"
+            )
         client.fake_razorpay = _fake
         yield client
 

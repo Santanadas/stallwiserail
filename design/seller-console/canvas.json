@@ -1,0 +1,133 @@
+{
+  "pages": [
+    {
+      "id": "page-1",
+      "name": "Seller console"
+    },
+    {
+      "id": "page-2",
+      "name": "On the phone"
+    }
+  ],
+  "artboards": [
+    {
+      "file": "Main.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 1180,
+      "page": "page-1",
+      "title": "Home"
+    },
+    {
+      "file": "Orders.dc.html",
+      "x": 1560,
+      "y": 0,
+      "w": 1440,
+      "h": 1180,
+      "page": "page-1",
+      "title": "Orders"
+    },
+    {
+      "file": "OrderDetail.dc.html",
+      "x": 3120,
+      "y": 0,
+      "w": 1440,
+      "h": 1180,
+      "page": "page-1",
+      "title": "Order detail"
+    },
+    {
+      "file": "Products.dc.html",
+      "x": 0,
+      "y": 1300,
+      "w": 1440,
+      "h": 1180,
+      "page": "page-1",
+      "title": "Products"
+    },
+    {
+      "file": "Payouts.dc.html",
+      "x": 1560,
+      "y": 1300,
+      "w": 1440,
+      "h": 1180,
+      "page": "page-1",
+      "title": "Payouts"
+    },
+    {
+      "file": "Insights.dc.html",
+      "x": 3120,
+      "y": 1300,
+      "w": 1440,
+      "h": 1180,
+      "page": "page-1",
+      "title": "Insights"
+    },
+    {
+      "file": "Settings.dc.html",
+      "x": 0,
+      "y": 2600,
+      "w": 1440,
+      "h": 1240,
+      "page": "page-1",
+      "title": "Settings"
+    },
+    {
+      "file": "MobileHome.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "page": "page-2",
+      "title": "Home"
+    },
+    {
+      "file": "MobileOrder.dc.html",
+      "x": 510,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "page": "page-2",
+      "title": "Doorstep handover"
+    }
+  ],
+  "annotations": [
+    {
+      "id": "what-changed",
+      "x": 0,
+      "y": -300,
+      "w": 560,
+      "page": "page-1",
+      "text": "Same theme, new structure.\n\nThe old dashboard put five horizontally-scrolling tabs under four KPI cards, and every card had its own coloured icon chip. That is where the mess came from — four accent colours competing before you had read a single number.\n\nWhat changed:\n• A left sidebar, grouped Run the shop / Grow / Money. Room for nine sections instead of five, no horizontal scroll.\n• Colour is now reserved. Orange means \"a thing to act on\". Status colours are the existing StatusPill palette and nothing else borrows them.\n• The KPI row is one flat strip, not four floating cards."
+    },
+    {
+      "id": "action-queue",
+      "x": 1560,
+      "y": -300,
+      "w": 480,
+      "page": "page-1",
+      "text": "Needs you today — the biggest change.\n\nThe old Overview opened with vanity totals. A seller's actual first question is \"what do I have to do?\", so the top of Home is now a queue: orders to ship, deliveries waiting on an OTP, stock about to run out, and whether the bank account is verified.\n\nEmpty queue = nothing to do today. That is the goal state."
+    },
+    {
+      "id": "new-features",
+      "x": 3120,
+      "y": -300,
+      "w": 500,
+      "page": "page-1",
+      "text": "Added, not in the app yet:\n\nCustomers · Insights · Discounts · Storefront appearance · bulk order actions and CSV export · packing slips · low-stock forecasting (\"runs out Thursday\") · payout history with commission per settlement · delivery charges and free-delivery threshold · GSTIN and HSN fields · notification preferences.\n\nAll the numbers on these boards are sample data."
+    },
+    {
+      "id": "phone-first",
+      "x": 0,
+      "y": -240,
+      "w": 480,
+      "page": "page-2",
+      "text": "Most of these sellers run the shop from a phone.\n\nHome is the same action queue, thumb-reachable. The second board is the doorstep moment: the seller has the parcel in one hand and needs to type the buyer's 6-digit code — so that is the whole screen, with 56px inputs and a 52px button.\n\nNo fake status bar or keyboard: the real ones render on top."
+    }
+  ],
+  "launch": {
+    "view": "canvas",
+    "page": "page-1"
+  }
+}

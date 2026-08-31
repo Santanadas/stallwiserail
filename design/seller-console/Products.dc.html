@@ -1,0 +1,311 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
+  <style>
+    body { margin: 0; font-family: "Satoshi", "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif; -webkit-font-smoothing: antialiased; color: #0A0A0A; }
+    a { color: #C43D00; text-decoration: none; } a:hover { color: #8A2200; }
+    h1, h2, h3 { font-family: "Cabinet Grotesk", "Archivo", "Satoshi", ui-sans-serif, sans-serif; margin: 0; letter-spacing: -0.02em; }
+    p { margin: 0; }
+  </style>
+</helmet>
+
+<div style="width: 1440px; height: 1180px; display: flex; background: #FAFAFA; overflow: hidden;">
+
+  <aside style="width: 248px; flex-shrink: 0; background: #FFFFFF; border-right: 1px solid #E5E5E5; display: flex; flex-direction: column;">
+    <div style="display: flex; align-items: center; gap: 10px; padding: 16px 16px 15px 16px; border-bottom: 1px solid #F5F5F5;">
+      <div style="width: 34px; height: 34px; border-radius: 11px; background: #FF4F00; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4.2 8h15.6l-1.1 11.1A2 2 0 0 1 16.7 21H7.3a2 2 0 0 1-2-1.9Z"></path><path d="M8.6 8V6.1a3.4 3.4 0 0 1 6.8 0V8"></path></svg>
+      </div>
+      <div style="min-width: 0; flex: 1;">
+        <div style="font-family: 'Cabinet Grotesk','Archivo',sans-serif; font-size: 14px; font-weight: 800; color: #0A0A0A; letter-spacing: -0.015em; line-height: 1.15;">Asha Handlooms</div>
+        <div style="font-size: 11px; color: #A3A3A3; font-weight: 500; line-height: 1.4;">stallwise.in/asha</div>
+      </div>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#A3A3A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 15 5 5 5-5"></path><path d="m7 9 5-5 5 5"></path></svg>
+    </div>
+
+    <nav style="flex: 1; padding: 12px 10px; display: flex; flex-direction: column; gap: 2px;">
+      <div style="padding: 8px 10px 6px 10px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #A3A3A3;">Run the shop</div>
+      <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; color: #525252; font-size: 13px; font-weight: 600;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#737373" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5 12 3l9 6.5V20a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path><path d="M9 22v-8h6v8"></path></svg>
+        <span style="flex: 1;">Home</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; color: #525252; font-size: 13px; font-weight: 600;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#737373" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 2 3.5 6v14a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2V6l-3-4Z"></path><path d="M3.5 6h17"></path><path d="M16 10a4 4 0 0 1-8 0"></path></svg>
+        <span style="flex: 1;">Orders</span><span style="background: #FF4F00; color: #FFFFFF; font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 999px;">3</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; background: #FFF7ED; color: #C43D00; font-size: 13px; font-weight: 700;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#C43D00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"></path><path d="m3.3 7 8.7 5 8.7-5"></path><path d="M12 22V12"></path></svg>
+        <span style="flex: 1;">Products</span><span style="background: #F5F5F5; color: #737373; font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 999px;">24</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; color: #525252; font-size: 13px; font-weight: 600;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#737373" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path></svg>
+        <span style="flex: 1;">Customers</span>
+      </div>
+      <div style="padding: 16px 10px 6px 10px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #A3A3A3;">Grow</div>
+      <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; color: #525252; font-size: 13px; font-weight: 600;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#737373" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 7 13.5 15.5 8.5 10.5 2 17"></path><path d="M16 7h6v6"></path></svg>
+        <span style="flex: 1;">Insights</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; color: #525252; font-size: 13px; font-weight: 600;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#737373" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4Z"></path><circle cx="7.5" cy="7.5" r="1.2"></circle></svg>
+        <span style="flex: 1;">Discounts</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; color: #525252; font-size: 13px; font-weight: 600;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#737373" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V10.5"></path><path d="M20 21V10.5"></path><path d="M2 10.5 4.6 4.4A2 2 0 0 1 6.5 3h11a2 2 0 0 1 1.9 1.4L22 10.5Z"></path><path d="M2 21h20"></path><path d="M9.5 21v-5.5h5V21"></path></svg>
+        <span style="flex: 1;">Storefront</span>
+      </div>
+      <div style="padding: 16px 10px 6px 10px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #A3A3A3;">Money</div>
+      <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; color: #525252; font-size: 13px; font-weight: 600;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#737373" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2.5"></rect><path d="M2 10h20"></path></svg>
+        <span style="flex: 1;">Payouts</span><span style="width: 6px; height: 6px; border-radius: 999px; background: #F59E0B;"></span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; color: #525252; font-size: 13px; font-weight: 600;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#737373" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v3"></path><path d="M12 19v3"></path><path d="m4.9 4.9 2.1 2.1"></path><path d="m17 17 2.1 2.1"></path><path d="M2 12h3"></path><path d="M19 12h3"></path><path d="m4.9 19.1 2.1-2.1"></path><path d="m17 7 2.1-2.1"></path></svg>
+        <span style="flex: 1;">Settings</span>
+      </div>
+    </nav>
+
+    <div style="padding: 12px; border-top: 1px solid #F5F5F5;">
+      <div style="border-radius: 14px; background: #0A0A0A; padding: 14px; display: flex; flex-direction: column; gap: 10px;">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <span style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #A3A3A3;">Free plan</span>
+          <span style="font-size: 10px; font-weight: 700; color: #FF7A3D;">10% fee</span>
+        </div>
+        <p style="font-size: 12px; line-height: 1.45; color: #E5E5E5; font-weight: 500;">You paid <strong style="color:#FFFFFF; font-weight:800;">₹4,120</strong> in commission this month.</p>
+        <div style="background: #FF4F00; color: #FFFFFF; font-size: 12px; font-weight: 800; padding: 9px; border-radius: 10px; text-align: center;">Go Pro — keep 100%</div>
+      </div>
+    </div>
+  </aside>
+
+  <div style="flex: 1; min-width: 0; display: flex; flex-direction: column;">
+
+    <header style="height: 64px; flex-shrink: 0; background: #FFFFFF; border-bottom: 1px solid #E5E5E5; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 0 28px;">
+      <div>
+        <h1 style="font-size: 18px; font-weight: 800; color: #0A0A0A; line-height: 1.2;">Products</h1>
+        <p style="font-size: 12px; color: #737373; font-weight: 500; margin-top: 2px;">24 listings · 21 live, 3 drafts</p>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; border: 1px solid #E5E5E5; border-radius: 10px; background: #FAFAFA; width: 220px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#A3A3A3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+          <span style="font-size: 13px; color: #A3A3A3; font-weight: 500;">Search orders, products…</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px; border-radius: 10px; background: #FF4F00; color: #FFFFFF; font-size: 13px; font-weight: 800;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>Add product
+        </div>
+        <div style="position: relative; width: 36px; height: 36px; border: 1px solid #E5E5E5; border-radius: 10px; background: #FFFFFF; display: flex; align-items: center; justify-content: center;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#525252" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"></path></svg>
+          <span style="position: absolute; top: 6px; right: 7px; width: 7px; height: 7px; border-radius: 999px; background: #FF4F00; border: 1.5px solid #FFFFFF;"></span>
+        </div>
+        <div style="width: 36px; height: 36px; border-radius: 10px; background: #0A0A0A; color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 800;">AK</div>
+      </div>
+    </header>
+
+    <div style="flex: 1; overflow: hidden; padding: 24px 28px; display: flex; flex-direction: column; gap: 20px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+        <div style="display: flex; gap: 3px; background: #F0F0F0; border-radius: 11px; padding: 3px;">
+          <div style="padding: 7px 13px; border-radius: 9px; background: #FFFFFF; box-shadow: 0 1px 2px 0 rgba(0,0,0,0.06); font-size: 12.5px; font-weight: 800; color: #0A0A0A;">All 24</div>
+          <div style="padding: 7px 13px; font-size: 12.5px; font-weight: 600; color: #737373;">Live 21</div>
+          <div style="padding: 7px 13px; font-size: 12.5px; font-weight: 600; color: #737373;">Drafts 3</div>
+          <div style="display: flex; align-items: center; gap: 7px; padding: 7px 13px; font-size: 12.5px; font-weight: 600; color: #B45309;">Low stock<span style="font-size: 10px; font-weight: 800; color: #B45309; background: #FFFBEB; border: 1px solid #FDE68A; padding: 1px 6px; border-radius: 999px;">4</span></div>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <div style="display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px; border: 1px solid #E5E5E5; border-radius: 10px; background: #FFFFFF; font-size: 12.5px; font-weight: 600; color: #525252;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#737373" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18"></path><path d="M6.5 12h11"></path><path d="M10 19h4"></path></svg>Sort: Best selling
+          </div>
+          <div style="display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px; border: 1px solid #E5E5E5; border-radius: 10px; background: #FFFFFF; font-size: 12.5px; font-weight: 600; color: #525252;">Bulk edit prices</div>
+        </div>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 12px; background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 12px; padding: 11px 16px;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#B45309" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3"></path><path d="M12 9.5v4"></path><path d="M12 17.2h.01"></path></svg>
+        <span style="flex: 1; font-size: 12.5px; font-weight: 600; color: #92400E;">Cotton Table Runner has 2 left and sells about 6 a week. It will run out on Thursday.</span>
+        <span style="font-size: 12.5px; font-weight: 800; color: #8A2200;">Restock now</span>
+      </div>
+
+      <section style="background: #FFFFFF; border: 1px solid #E5E5E5; border-radius: 16px; box-shadow: 0 1px 2px 0 rgba(0,0,0,0.05); overflow: hidden; flex: 1; min-height: 0; display: flex; flex-direction: column;">
+        <div style="padding: 16px 20px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px;">
+          <div style="border: 1px solid #E5E5E5; border-radius: 14px; background: #FFFFFF; overflow: hidden; display: flex; flex-direction: column;">
+            <div style="height: 118px; background: #F5F5F5; border-bottom: 1px solid #E5E5E5; display: flex; align-items: center; justify-content: center; position: relative;">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#C4C4C4" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5"></rect><circle cx="8.8" cy="8.8" r="1.8"></circle><path d="m21 15.5-4.5-4.5L5 21"></path></svg>
+              <span style="position: absolute; top: 9px; left: 9px; font-size: 10px; font-weight: 700; color: #B45309; background: #FFFBEB; border: 1px solid #FDE68A; padding: 2px 8px; border-radius: 999px;">2 left</span>
+              <div style="position: absolute; top: 7px; right: 7px; width: 26px; height: 26px; border-radius: 8px; background: rgba(255,255,255,0.94); border: 1px solid #E5E5E5; display: flex; align-items: center; justify-content: center;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#525252" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="12" cy="19" r="1.4"></circle></svg>
+              </div>
+            </div>
+            <div style="padding: 12px; display: flex; flex-direction: column; gap: 7px; flex: 1;">
+              <div style="font-size: 13px; font-weight: 700; color: #0A0A0A; line-height: 1.3; text-wrap: pretty;">Handwoven Cotton Table Runner</div>
+              <div style="display: flex; align-items: baseline; gap: 7px;">
+                <span style="font-family: 'Cabinet Grotesk','Archivo',sans-serif; font-size: 17px; font-weight: 900; color: #0A0A0A;">₹599</span>
+                <span style="font-size: 11px; color: #A3A3A3; font-weight: 500;">3 sizes</span>
+              </div>
+              <div style="display: flex; gap: 5px; margin-top: auto; padding-top: 4px;"><span style="font-size: 10px; font-weight: 700; color: #525252; background: #F5F5F5; padding: 2px 7px; border-radius: 6px;">UPI</span><span style="font-size: 10px; font-weight: 700; color: #525252; background: #F5F5F5; padding: 2px 7px; border-radius: 6px;">Cash</span></div>
+            </div>
+          </div>
+          <div style="border: 1px solid #E5E5E5; border-radius: 14px; background: #FFFFFF; overflow: hidden; display: flex; flex-direction: column;">
+            <div style="height: 118px; background: #F5F5F5; border-bottom: 1px solid #E5E5E5; display: flex; align-items: center; justify-content: center; position: relative;">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#C4C4C4" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5"></rect><circle cx="8.8" cy="8.8" r="1.8"></circle><path d="m21 15.5-4.5-4.5L5 21"></path></svg>
+              <span style="position: absolute; top: 9px; left: 9px; font-size: 10px; font-weight: 700; color: #047857; background: #ECFDF5; border: 1px solid #A7F3D0; padding: 2px 8px; border-radius: 999px;">14 in stock</span>
+              <div style="position: absolute; top: 7px; right: 7px; width: 26px; height: 26px; border-radius: 8px; background: rgba(255,255,255,0.94); border: 1px solid #E5E5E5; display: flex; align-items: center; justify-content: center;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#525252" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="12" cy="19" r="1.4"></circle></svg>
+              </div>
+            </div>
+            <div style="padding: 12px; display: flex; flex-direction: column; gap: 7px; flex: 1;">
+              <div style="font-size: 13px; font-weight: 700; color: #0A0A0A; line-height: 1.3; text-wrap: pretty;">Indigo Block-Print Cushion Set</div>
+              <div style="display: flex; align-items: baseline; gap: 7px;">
+                <span style="font-family: 'Cabinet Grotesk','Archivo',sans-serif; font-size: 17px; font-weight: 900; color: #0A0A0A;">₹2,450</span>
+                <span style="font-size: 11px; color: #A3A3A3; font-weight: 500;">2 sizes</span>
+              </div>
+              <div style="display: flex; gap: 5px; margin-top: auto; padding-top: 4px;"><span style="font-size: 10px; font-weight: 700; color: #525252; background: #F5F5F5; padding: 2px 7px; border-radius: 6px;">UPI</span></div>
+            </div>
+          </div>
+          <div style="border: 1px solid #E5E5E5; border-radius: 14px; background: #FFFFFF; overflow: hidden; display: flex; flex-direction: column;">
+            <div style="height: 118px; background: #F5F5F5; border-bottom: 1px solid #E5E5E5; display: flex; align-items: center; justify-content: center; position: relative;">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#C4C4C4" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5"></rect><circle cx="8.8" cy="8.8" r="1.8"></circle><path d="m21 15.5-4.5-4.5L5 21"></path></svg>
+              <span style="position: absolute; top: 9px; left: 9px; font-size: 10px; font-weight: 700; color: #047857; background: #ECFDF5; border: 1px solid #A7F3D0; padding: 2px 8px; border-radius: 999px;">38 in stock</span>
+              <div style="position: absolute; top: 7px; right: 7px; width: 26px; height: 26px; border-radius: 8px; background: rgba(255,255,255,0.94); border: 1px solid #E5E5E5; display: flex; align-items: center; justify-content: center;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#525252" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="12" cy="19" r="1.4"></circle></svg>
+              </div>
+            </div>
+            <div style="padding: 12px; display: flex; flex-direction: column; gap: 7px; flex: 1;">
+              <div style="font-size: 13px; font-weight: 700; color: #0A0A0A; line-height: 1.3; text-wrap: pretty;">Kora Cotton Table Mat</div>
+              <div style="display: flex; align-items: baseline; gap: 7px;">
+                <span style="font-family: 'Cabinet Grotesk','Archivo',sans-serif; font-size: 17px; font-weight: 900; color: #0A0A0A;">₹240</span>
+                <span style="font-size: 11px; color: #A3A3A3; font-weight: 500;">No variants</span>
+              </div>
+              <div style="display: flex; gap: 5px; margin-top: auto; padding-top: 4px;"><span style="font-size: 10px; font-weight: 700; color: #525252; background: #F5F5F5; padding: 2px 7px; border-radius: 6px;">UPI</span><span style="font-size: 10px; font-weight: 700; color: #525252; background: #F5F5F5; padding: 2px 7px; border-radius: 6px;">Cash</span></div>
+            </div>
+          </div>
+          <div style="border: 1px solid #E5E5E5; border-radius: 14px; background: #FFFFFF; overflow: hidden; display: flex; flex-direction: column;">
+            <div style="height: 118px; background: #F5F5F5; border-bottom: 1px solid #E5E5E5; display: flex; align-items: center; justify-content: center; position: relative;">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#C4C4C4" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5"></rect><circle cx="8.8" cy="8.8" r="1.8"></circle><path d="m21 15.5-4.5-4.5L5 21"></path></svg>
+              <span style="position: absolute; top: 9px; left: 9px; font-size: 10px; font-weight: 700; color: #BE123C; background: #FFF1F2; border: 1px solid #FECDD3; padding: 2px 8px; border-radius: 999px;">Out of stock</span>
+              <div style="position: absolute; top: 7px; right: 7px; width: 26px; height: 26px; border-radius: 8px; background: rgba(255,255,255,0.94); border: 1px solid #E5E5E5; display: flex; align-items: center; justify-content: center;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#525252" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="12" cy="19" r="1.4"></circle></svg>
+              </div>
+            </div>
+            <div style="padding: 12px; display: flex; flex-direction: column; gap: 7px; flex: 1;">
+              <div style="font-size: 13px; font-weight: 700; color: #0A0A0A; line-height: 1.3; text-wrap: pretty;">Handwoven Wool Throw</div>
+              <div style="display: flex; align-items: baseline; gap: 7px;">
+                <span style="font-family: 'Cabinet Grotesk','Archivo',sans-serif; font-size: 17px; font-weight: 900; color: #0A0A0A;">₹3,200</span>
+                <span style="font-size: 11px; color: #A3A3A3; font-weight: 500;">4 colours</span>
+              </div>
+              <div style="display: flex; gap: 5px; margin-top: auto; padding-top: 4px;"><span style="font-size: 10px; font-weight: 700; color: #525252; background: #F5F5F5; padding: 2px 7px; border-radius: 6px;">UPI</span></div>
+            </div>
+          </div>
+          <div style="border: 1px solid #E5E5E5; border-radius: 14px; background: #FFFFFF; overflow: hidden; display: flex; flex-direction: column;">
+            <div style="height: 118px; background: #F5F5F5; border-bottom: 1px solid #E5E5E5; display: flex; align-items: center; justify-content: center; position: relative;">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#C4C4C4" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5"></rect><circle cx="8.8" cy="8.8" r="1.8"></circle><path d="m21 15.5-4.5-4.5L5 21"></path></svg>
+              <span style="position: absolute; top: 9px; left: 9px; font-size: 10px; font-weight: 700; color: #737373; background: #F5F5F5; border: 1px solid #E5E5E5; padding: 2px 8px; border-radius: 999px;">Draft</span>
+              <div style="position: absolute; top: 7px; right: 7px; width: 26px; height: 26px; border-radius: 8px; background: rgba(255,255,255,0.94); border: 1px solid #E5E5E5; display: flex; align-items: center; justify-content: center;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#525252" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="12" cy="19" r="1.4"></circle></svg>
+              </div>
+            </div>
+            <div style="padding: 12px; display: flex; flex-direction: column; gap: 7px; flex: 1;">
+              <div style="font-size: 13px; font-weight: 700; color: #0A0A0A; line-height: 1.3; text-wrap: pretty;">Kalamkari Cotton Napkins</div>
+              <div style="display: flex; align-items: baseline; gap: 7px;">
+                <span style="font-family: 'Cabinet Grotesk','Archivo',sans-serif; font-size: 17px; font-weight: 900; color: #0A0A0A;">₹480</span>
+                <span style="font-size: 11px; color: #A3A3A3; font-weight: 500;">Set of 6</span>
+              </div>
+              <div style="display: flex; gap: 5px; margin-top: auto; padding-top: 4px;"><span style="font-size: 10px; font-weight: 700; color: #525252; background: #F5F5F5; padding: 2px 7px; border-radius: 6px;">UPI</span><span style="font-size: 10px; font-weight: 700; color: #525252; background: #F5F5F5; padding: 2px 7px; border-radius: 6px;">Cash</span></div>
+            </div>
+          </div>
+          <div style="border: 1px solid #E5E5E5; border-radius: 14px; background: #FFFFFF; overflow: hidden; display: flex; flex-direction: column;">
+            <div style="height: 118px; background: #F5F5F5; border-bottom: 1px solid #E5E5E5; display: flex; align-items: center; justify-content: center; position: relative;">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#C4C4C4" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5"></rect><circle cx="8.8" cy="8.8" r="1.8"></circle><path d="m21 15.5-4.5-4.5L5 21"></path></svg>
+              <span style="position: absolute; top: 9px; left: 9px; font-size: 10px; font-weight: 700; color: #047857; background: #ECFDF5; border: 1px solid #A7F3D0; padding: 2px 8px; border-radius: 999px;">9 in stock</span>
+              <div style="position: absolute; top: 7px; right: 7px; width: 26px; height: 26px; border-radius: 8px; background: rgba(255,255,255,0.94); border: 1px solid #E5E5E5; display: flex; align-items: center; justify-content: center;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#525252" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="12" cy="19" r="1.4"></circle></svg>
+              </div>
+            </div>
+            <div style="padding: 12px; display: flex; flex-direction: column; gap: 7px; flex: 1;">
+              <div style="font-size: 13px; font-weight: 700; color: #0A0A0A; line-height: 1.3; text-wrap: pretty;">Ikat Weave Cushion Cover</div>
+              <div style="display: flex; align-items: baseline; gap: 7px;">
+                <span style="font-family: 'Cabinet Grotesk','Archivo',sans-serif; font-size: 17px; font-weight: 900; color: #0A0A0A;">₹890</span>
+                <span style="font-size: 11px; color: #A3A3A3; font-weight: 500;">3 colours</span>
+              </div>
+              <div style="display: flex; gap: 5px; margin-top: auto; padding-top: 4px;"><span style="font-size: 10px; font-weight: 700; color: #525252; background: #F5F5F5; padding: 2px 7px; border-radius: 6px;">UPI</span><span style="font-size: 10px; font-weight: 700; color: #525252; background: #F5F5F5; padding: 2px 7px; border-radius: 6px;">Cash</span></div>
+            </div>
+          </div>
+          <div style="border: 1px solid #E5E5E5; border-radius: 14px; background: #FFFFFF; overflow: hidden; display: flex; flex-direction: column;">
+            <div style="height: 118px; background: #F5F5F5; border-bottom: 1px solid #E5E5E5; display: flex; align-items: center; justify-content: center; position: relative;">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#C4C4C4" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5"></rect><circle cx="8.8" cy="8.8" r="1.8"></circle><path d="m21 15.5-4.5-4.5L5 21"></path></svg>
+              <span style="position: absolute; top: 9px; left: 9px; font-size: 10px; font-weight: 700; color: #B45309; background: #FFFBEB; border: 1px solid #FDE68A; padding: 2px 8px; border-radius: 999px;">3 left</span>
+              <div style="position: absolute; top: 7px; right: 7px; width: 26px; height: 26px; border-radius: 8px; background: rgba(255,255,255,0.94); border: 1px solid #E5E5E5; display: flex; align-items: center; justify-content: center;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#525252" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="12" cy="19" r="1.4"></circle></svg>
+              </div>
+            </div>
+            <div style="padding: 12px; display: flex; flex-direction: column; gap: 7px; flex: 1;">
+              <div style="font-size: 13px; font-weight: 700; color: #0A0A0A; line-height: 1.3; text-wrap: pretty;">Mangalgiri Cotton Stole</div>
+              <div style="display: flex; align-items: baseline; gap: 7px;">
+                <span style="font-family: 'Cabinet Grotesk','Archivo',sans-serif; font-size: 17px; font-weight: 900; color: #0A0A0A;">₹1,150</span>
+                <span style="font-size: 11px; color: #A3A3A3; font-weight: 500;">5 colours</span>
+              </div>
+              <div style="display: flex; gap: 5px; margin-top: auto; padding-top: 4px;"><span style="font-size: 10px; font-weight: 700; color: #525252; background: #F5F5F5; padding: 2px 7px; border-radius: 6px;">UPI</span></div>
+            </div>
+          </div>
+          <div style="border: 1px solid #E5E5E5; border-radius: 14px; background: #FFFFFF; overflow: hidden; display: flex; flex-direction: column;">
+            <div style="height: 118px; background: #F5F5F5; border-bottom: 1px solid #E5E5E5; display: flex; align-items: center; justify-content: center; position: relative;">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#C4C4C4" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5"></rect><circle cx="8.8" cy="8.8" r="1.8"></circle><path d="m21 15.5-4.5-4.5L5 21"></path></svg>
+              <span style="position: absolute; top: 9px; left: 9px; font-size: 10px; font-weight: 700; color: #047857; background: #ECFDF5; border: 1px solid #A7F3D0; padding: 2px 8px; border-radius: 999px;">6 in stock</span>
+              <div style="position: absolute; top: 7px; right: 7px; width: 26px; height: 26px; border-radius: 8px; background: rgba(255,255,255,0.94); border: 1px solid #E5E5E5; display: flex; align-items: center; justify-content: center;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#525252" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="12" cy="19" r="1.4"></circle></svg>
+              </div>
+            </div>
+            <div style="padding: 12px; display: flex; flex-direction: column; gap: 7px; flex: 1;">
+              <div style="font-size: 13px; font-weight: 700; color: #0A0A0A; line-height: 1.3; text-wrap: pretty;">Jamdani Table Linen Set</div>
+              <div style="display: flex; align-items: baseline; gap: 7px;">
+                <span style="font-family: 'Cabinet Grotesk','Archivo',sans-serif; font-size: 17px; font-weight: 900; color: #0A0A0A;">₹4,600</span>
+                <span style="font-size: 11px; color: #A3A3A3; font-weight: 500;">2 sizes</span>
+              </div>
+              <div style="display: flex; gap: 5px; margin-top: auto; padding-top: 4px;"><span style="font-size: 10px; font-weight: 700; color: #525252; background: #F5F5F5; padding: 2px 7px; border-radius: 6px;">UPI</span></div>
+            </div>
+          </div>
+          <div style="border: 1px solid #E5E5E5; border-radius: 14px; background: #FFFFFF; overflow: hidden; display: flex; flex-direction: column;">
+            <div style="height: 118px; background: #F5F5F5; border-bottom: 1px solid #E5E5E5; display: flex; align-items: center; justify-content: center; position: relative;">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#C4C4C4" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5"></rect><circle cx="8.8" cy="8.8" r="1.8"></circle><path d="m21 15.5-4.5-4.5L5 21"></path></svg>
+              <span style="position: absolute; top: 9px; left: 9px; font-size: 10px; font-weight: 700; color: #047857; background: #ECFDF5; border: 1px solid #A7F3D0; padding: 2px 8px; border-radius: 999px;">11 in stock</span>
+              <div style="position: absolute; top: 7px; right: 7px; width: 26px; height: 26px; border-radius: 8px; background: rgba(255,255,255,0.94); border: 1px solid #E5E5E5; display: flex; align-items: center; justify-content: center;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#525252" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="12" cy="19" r="1.4"></circle></svg>
+              </div>
+            </div>
+            <div style="padding: 12px; display: flex; flex-direction: column; gap: 7px; flex: 1;">
+              <div style="font-size: 13px; font-weight: 700; color: #0A0A0A; line-height: 1.3; text-wrap: pretty;">Chanderi Silk Runner</div>
+              <div style="display: flex; align-items: baseline; gap: 7px;">
+                <span style="font-family: 'Cabinet Grotesk','Archivo',sans-serif; font-size: 17px; font-weight: 900; color: #0A0A0A;">₹2,100</span>
+                <span style="font-size: 11px; color: #A3A3A3; font-weight: 500;">No variants</span>
+              </div>
+              <div style="display: flex; gap: 5px; margin-top: auto; padding-top: 4px;"><span style="font-size: 10px; font-weight: 700; color: #525252; background: #F5F5F5; padding: 2px 7px; border-radius: 6px;">UPI</span><span style="font-size: 10px; font-weight: 700; color: #525252; background: #F5F5F5; padding: 2px 7px; border-radius: 6px;">Cash</span></div>
+            </div>
+          </div>
+          <div style="border: 1px solid #E5E5E5; border-radius: 14px; background: #FFFFFF; overflow: hidden; display: flex; flex-direction: column;">
+            <div style="height: 118px; background: #F5F5F5; border-bottom: 1px solid #E5E5E5; display: flex; align-items: center; justify-content: center; position: relative;">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#C4C4C4" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5"></rect><circle cx="8.8" cy="8.8" r="1.8"></circle><path d="m21 15.5-4.5-4.5L5 21"></path></svg>
+              <span style="position: absolute; top: 9px; left: 9px; font-size: 10px; font-weight: 700; color: #B45309; background: #FFFBEB; border: 1px solid #FDE68A; padding: 2px 8px; border-radius: 999px;">1 left</span>
+              <div style="position: absolute; top: 7px; right: 7px; width: 26px; height: 26px; border-radius: 8px; background: rgba(255,255,255,0.94); border: 1px solid #E5E5E5; display: flex; align-items: center; justify-content: center;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#525252" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="12" cy="19" r="1.4"></circle></svg>
+              </div>
+            </div>
+            <div style="padding: 12px; display: flex; flex-direction: column; gap: 7px; flex: 1;">
+              <div style="font-size: 13px; font-weight: 700; color: #0A0A0A; line-height: 1.3; text-wrap: pretty;">Beige Cotton Placemat</div>
+              <div style="display: flex; align-items: baseline; gap: 7px;">
+                <span style="font-family: 'Cabinet Grotesk','Archivo',sans-serif; font-size: 17px; font-weight: 900; color: #0A0A0A;">₹320</span>
+                <span style="font-size: 11px; color: #A3A3A3; font-weight: 500;">Set of 4</span>
+              </div>
+              <div style="display: flex; gap: 5px; margin-top: auto; padding-top: 4px;"><span style="font-size: 10px; font-weight: 700; color: #525252; background: #F5F5F5; padding: 2px 7px; border-radius: 6px;">Cash</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>
