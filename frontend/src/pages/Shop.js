@@ -1,9 +1,9 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { ShoppingBag, Trash2, Store, ArrowRight, Package, Share2, Check, ExternalLink } from "lucide-react";
+import { ShoppingBag, Store, ArrowRight, Package, Share2, Check } from "lucide-react";
 import api, { formatApiError } from "@/lib/api";
 import { fileUrl } from "@/components/ImageUpload";
-import { Btn } from "@/components/Kit";
+import CartDrawer from "@/components/CartDrawer";
 import { useDocumentMeta } from "@/lib/useDocumentMeta";
 
 function initials(name) {
@@ -20,6 +20,7 @@ export default function Shop() {
   const [buyer, setBuyer] = useState({ buyerName: "", buyerEmail: "", buyerPhone: "" });
   const [placing, setPlacing] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [cartOpen, setCartOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -71,9 +72,14 @@ export default function Shop() {
     }
     setErr("");
     setCart([...cart, { productId: p.product_id, title: p.title, quantity: 1, optionSelections: sel, unitPrice: unitPrice(p) }]);
+    setCartOpen(true);
   };
 
   const removeItem = (i) => setCart(cart.filter((_, idx) => idx !== i));
+  const setQty = (i, q) => {
+    if (q < 1) return removeItem(i);
+    setCart(cart.map((c, idx) => (idx === i ? { ...c, quantity: Math.min(q, 999) } : c)));
+  };
   const cartTotal = cart.reduce((s, c) => s + (c.unitPrice || 0) * c.quantity, 0);
 
   const isSoldOut = (p) => {
@@ -205,6 +211,15 @@ export default function Shop() {
 
   return (
     <div className="mk min-h-screen bg-[#FAFAFA] pb-24 text-[#0A0A0A] sm:pb-12" data-testid="shop-page">
+      {err && !cartOpen && (
+        <div
+          className="fixed left-1/2 top-4 z-[110] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 border-2 border-[#0A0A0A] bg-[#FFE9E0] px-4 py-2.5 text-sm font-medium text-[#8A2200] shadow-[4px_4px_0px_0px_rgba(10,10,10,1)]"
+          data-testid="shop-toast"
+          onClick={() => setErr("")}
+        >
+          {err}
+        </div>
+      )}
       <header className="sticky top-0 z-50 border-b-2 border-[#0A0A0A] bg-white/95 backdrop-blur-sm">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3 sm:px-6 md:px-8 md:py-3.5">
           <Link to="/" className="mk-head text-lg font-black tracking-tighter sm:text-xl">STALL WISE<span className="text-[#FF4F00]">.</span></Link>
@@ -219,14 +234,15 @@ export default function Shop() {
               {copied ? <Check className="h-4 w-4 text-[#0B5227]" /> : <Share2 className="h-4 w-4" />}
               <span>{copied ? "Copied!" : "Share"}</span>
             </button>
-            <a
-              href="#cart"
+            <button
+              type="button"
+              onClick={() => setCartOpen(true)}
               className="relative inline-flex min-h-[40px] items-center gap-2 border-2 border-[#0A0A0A] bg-white px-3 py-1.5 text-xs font-bold transition-transform hover:-translate-y-0.5 hover:shadow-[3px_3px_0px_0px_rgba(10,10,10,1)] sm:text-sm"
               data-testid="cart-jump"
             >
               <ShoppingBag className="h-4 w-4" /> Cart
               {cart.length > 0 && <span className="ml-1 border border-[#0A0A0A] bg-[#FF4F00] px-1.5 text-xs text-white" data-testid="cart-count">{cart.length}</span>}
-            </a>
+            </button>
           </div>
         </div>
       </header>
@@ -335,79 +351,6 @@ export default function Shop() {
           </div>
         )}
 
-        {/* Cart */}
-        <div id="cart" className="mt-10 scroll-mt-20 border-2 border-[#0A0A0A] bg-white shadow-[6px_6px_0px_0px_rgba(10,10,10,1)] sm:mt-14">
-          <div className="flex items-center justify-between border-b-2 border-[#0A0A0A] bg-[#FAFAFA] px-4 py-3 sm:px-5">
-            <h2 className="mk-head text-base font-extrabold uppercase tracking-widest">Your cart</h2>
-            <span className="text-xs font-bold uppercase tracking-widest text-[#525252]">{cart.length} items</span>
-          </div>
-          <div className="p-4 sm:p-6">
-            {cart.length === 0 ? (
-              <p className="text-sm text-[#525252]" data-testid="cart-empty">Your cart is empty. Add something you love.</p>
-            ) : (
-              <>
-                <ul data-testid="cart-list" className="divide-y divide-[#E5E5E5]">
-                  {cart.map((c, i) => (
-                    <li key={i} className="flex items-center justify-between gap-3 py-3">
-                      <div className="min-w-0">
-                        <span className="font-medium text-sm sm:text-base">{c.title}</span>
-                        {Object.keys(c.optionSelections).length > 0 && <span className="ml-2 text-xs text-[#525252] sm:text-sm">{Object.values(c.optionSelections).join(", ")}</span>}
-                      </div>
-                      <div className="flex items-center gap-3 sm:gap-4">
-                        <span className="font-bold text-sm sm:text-base">₹{c.unitPrice}</span>
-                        <button data-testid={`cart-remove-${i}`} onClick={() => removeItem(i)} aria-label="Remove item" className="min-h-[36px] min-w-[36px] p-2 text-[#8A2200] transition-colors hover:text-[#FF4F00]"><Trash2 className="h-4 w-4" /></button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-                <div className="mt-4 flex items-center justify-between border-t-2 border-[#0A0A0A] pt-4">
-                  <span className="text-xs font-bold uppercase tracking-widest text-[#525252] sm:text-sm">Total</span>
-                  <span className="mk-head text-2xl font-black tracking-tighter" data-testid="cart-total">₹{cartTotal}</span>
-                </div>
-                <div className="mt-6 grid gap-4 sm:grid-cols-2">
-                  <label className="block">
-                    <span className="text-xs font-bold uppercase tracking-widest text-[#525252]">Your name</span>
-                    <input
-                      data-testid="buyer-name"
-                      value={buyer.buyerName || ""}
-                      onChange={(e) => setBuyer({ ...buyer, buyerName: e.target.value })}
-                      placeholder="Full name"
-                      className="mt-1.5 w-full min-h-[44px] border-2 border-[#0A0A0A] bg-white px-3 py-2.5 text-base outline-none focus:border-[#FF4F00] sm:text-sm"
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="text-xs font-bold uppercase tracking-widest text-[#525252]">Your email</span>
-                    <input
-                      data-testid="buyer-email"
-                      value={buyer.buyerEmail || ""}
-                      onChange={(e) => setBuyer({ ...buyer, buyerEmail: e.target.value })}
-                      placeholder="you@example.com"
-                      className="mt-1.5 w-full min-h-[44px] border-2 border-[#0A0A0A] bg-white px-3 py-2.5 text-base outline-none focus:border-[#FF4F00] sm:text-sm"
-                    />
-                  </label>
-                  <label className="block sm:col-span-2">
-                    <span className="text-xs font-bold uppercase tracking-widest text-[#525252]">Your phone</span>
-                    <input
-                      data-testid="buyer-phone"
-                      inputMode="tel"
-                      value={buyer.buyerPhone || ""}
-                      onChange={(e) => setBuyer({ ...buyer, buyerPhone: e.target.value })}
-                      placeholder="10-digit mobile number"
-                      className="mt-1.5 w-full min-h-[44px] border-2 border-[#0A0A0A] bg-white px-3 py-2.5 text-base outline-none focus:border-[#FF4F00] sm:text-sm"
-                    />
-                  </label>
-                </div>
-                <div className="mt-6">
-                  <Btn variant="primary" data-testid="checkout-btn" onClick={checkout} disabled={placing || !buyer.buyerName || !buyer.buyerEmail || buyer.buyerPhone.replace(/\D/g, "").length < 8} className="w-full sm:w-auto min-h-[48px]">
-                    {placing ? "Processing…" : <>Pay ₹{cartTotal} <ArrowRight className="h-4 w-4" /></>}
-                  </Btn>
-                  <p className="mt-2 text-xs text-[#525252]">Secure payment via Razorpay — your money goes straight to the seller.</p>
-                </div>
-              </>
-            )}
-            {err && <p className="mt-4 border-2 border-[#0A0A0A] bg-[#FFE9E0] px-4 py-2.5 text-sm font-medium text-[#8A2200]" data-testid="checkout-error">{err}</p>}
-          </div>
-        </div>
       </main>
 
       {/* Floating Sticky Mobile Cart Bar */}
@@ -418,15 +361,30 @@ export default function Shop() {
               <span className="text-xs text-neutral-400">{cart.length} {cart.length === 1 ? "item" : "items"}</span>
               <p className="mk-head text-lg font-black text-white">₹{cartTotal}</p>
             </div>
-            <a
-              href="#cart"
+            <button
+              type="button"
+              onClick={() => setCartOpen(true)}
               className="inline-flex min-h-[42px] items-center gap-2 border-2 border-[#0A0A0A] bg-[#FF4F00] px-4 py-2 text-xs font-black uppercase tracking-wider text-white"
             >
               Checkout <ArrowRight className="h-3.5 w-3.5" />
-            </a>
+            </button>
           </div>
         </div>
       )}
+
+      <CartDrawer
+        open={cartOpen}
+        onClose={() => setCartOpen(false)}
+        cart={cart}
+        setQty={setQty}
+        removeItem={removeItem}
+        cartTotal={cartTotal}
+        buyer={buyer}
+        setBuyer={setBuyer}
+        checkout={checkout}
+        placing={placing}
+        err={err}
+      />
     </div>
   );
 }
