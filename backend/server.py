@@ -217,6 +217,7 @@ async def public_user(u: Optional[dict]) -> Optional[dict]:
         "subscriptionStatus": u.get("subscription_status") or u.get("subscriptionStatus", "inactive"),
         "picture": u.get("picture"),
         "avatar": u.get("avatar"),
+        "created_at": u.get("created_at"),
         "hasStore": bool(store),
         "storeSlug": store["slug"] if store else None,
         "storeName": store["name"] if store else None,
@@ -295,7 +296,6 @@ def public_order(o: Optional[dict], for_buyer: bool = False) -> Optional[dict]:
         "razorpayOrderId": o.get("razorpay_order_id") or o.get("razorpayOrderId"),
         "razorpayPaymentId": o.get("razorpay_payment_id") or o.get("razorpayPaymentId"),
         "razorpayKeyId": o.get("razorpay_key_id") or o.get("razorpayKeyId"),
-        "mockPayment": bool(o.get("mock_payment") or o.get("mockPayment", False)),
         "otpAttempts": o.get("otp_attempts") or o.get("otpAttempts", 0),
         "otpLocked": bool(o.get("otp_locked") or o.get("otpLocked", False)),
         "otpGeneratedAt": o.get("otp_generated_at") or o.get("otpGeneratedAt"),
@@ -819,7 +819,10 @@ async def route_onboard(body: RouteOnboardIn, user=Depends(get_current_user)):
         "beneficiary_name": clean_beneficiary, "account_number": clean_account, "ifsc": clean_ifsc,
         "profile": {"category": "ecommerce", "subcategory": "marketplace"},
     }
-    result = await asyncio.to_thread(route_service.create_linked_account, payload)
+    try:
+        result = await asyncio.to_thread(route_service.create_linked_account, payload)
+    except route_service.RouteError as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
     account_number_enc = security.encrypt_secret(clean_account) if clean_account else None
     updated_at = iso(now())
@@ -1044,75 +1047,65 @@ async def checkout(slug: str, body: OrderIn, request: Request):
     seller_sub = await effective_sub_status(seller) if seller else "inactive"
     commission_pct = COMMISSION_RATE_PRO if seller_sub == "active" else COMMISSION_RATE_FREE
     rc, plat_kid, _ = route_service.platform_client()
-    rp_order_id = None
-    rp_key_id = None
-    mock_payment = False
+    if not rc:
+        raise HTTPException(status_code=503, detail="Payments are unavailable right now. Please try again shortly.")
 
     amount_paise = int(round(total * 100))
+    if amount_paise <= 0:
+        raise HTTPException(status_code=400, detail="Order total must be greater than zero")
     seller_payout_paise = int(round(amount_paise * (1.0 - commission_pct)))
 
-    if rc and amount_paise > 0:
-        try:
-            order_payload = {
-                "amount": amount_paise,
-                "currency": "INR",
-                "payment_capture": 1,
-                "receipt": order_id[:40],
-                "notes": {
-                    "platform": "Stall Wise",
-                    "storeSlug": store["slug"],
-                    "orderId": order_id,
-                }
-            }
-            if route and route.get("mode") == "razorpay" and route.get("account_id"):
-                order_payload["transfers"] = [{
-                    "account": route["account_id"],
-                    "amount": seller_payout_paise,
-                    "currency": "INR",
-                    "on_hold": 0,
-                    "notes": {
-                        "platform": "Stall Wise",
-                        "storeSlug": store["slug"],
-                        "commission": f"{int(commission_pct * 100)}%",
-                    },
-                }]
-            rp = await asyncio.to_thread(rc.order.create, order_payload)
-            rp_order_id = rp["id"]
-            rp_key_id = plat_kid
-            mock_payment = False
-        except Exception as e:
-            logger.warning(f"Razorpay route order create with transfers failed: {e}; trying direct live capture")
+    order_payload = {
+        "amount": amount_paise,
+        "currency": "INR",
+        "payment_capture": 1,
+        "receipt": order_id[:40],
+        "notes": {"platform": "Stall Wise", "storeSlug": store["slug"], "orderId": order_id},
+    }
+    routed = bool(route and route.get("mode") == "razorpay" and route.get("account_id"))
+    if routed:
+        order_payload["transfers"] = [{
+            "account": route["account_id"],
+            "amount": seller_payout_paise,
+            "currency": "INR",
+            "on_hold": 0,
+            "notes": {
+                "platform": "Stall Wise",
+                "storeSlug": store["slug"],
+                "commission": f"{int(commission_pct * 100)}%",
+            },
+        }]
+
+    try:
+        rp = await asyncio.to_thread(rc.order.create, order_payload)
+    except Exception as e:
+        if routed:
+            logger.warning(f"Razorpay routed order create failed ({e}); retrying without transfer")
+            order_payload.pop("transfers", None)
             try:
-                rp = await asyncio.to_thread(rc.order.create, {
-                    "amount": amount_paise,
-                    "currency": "INR",
-                    "payment_capture": 1,
-                    "receipt": order_id[:40],
-                    "notes": {
-                        "platform": "Stall Wise",
-                        "storeSlug": store["slug"],
-                        "orderId": order_id,
-                    }
-                })
-                rp_order_id = rp["id"]
-                rp_key_id = plat_kid
-                mock_payment = False
+                rp = await asyncio.to_thread(rc.order.create, order_payload)
             except Exception as e2:
-                logger.error(f"Direct live Razorpay order creation error: {e2}")
-                mock_payment = False
+                logger.error(f"Razorpay order creation failed: {e2}")
+                raise HTTPException(status_code=502, detail="Could not start the payment. Please try again.")
+        else:
+            logger.error(f"Razorpay order creation failed: {e}")
+            raise HTTPException(status_code=502, detail="Could not start the payment. Please try again.")
+
+    rp_order_id = rp["id"]
+    rp_key_id = plat_kid
 
     await db.execute(
         """
         INSERT INTO orders (
             order_id, seller_id, store_slug, buyer_name, buyer_email, buyer_phone,
             address, items, subtotal, delivery_fee, tax, amount, status,
-            razorpay_order_id, razorpay_key_id, mock_payment, created_at
+            razorpay_order_id, razorpay_key_id, created_at
         ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'placed', $13, $14, $15, $16
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'placed', $13, $14, $15
         )
         """,
         order_id, store["seller_id"], store["slug"], body.buyerName, body.buyerEmail, body.buyerPhone,
-        body.address, items, total, 0, 0, total, rp_order_id, rp_key_id, mock_payment, created_at
+        body.address, items, total, 0, 0, total, rp_order_id, rp_key_id, created_at
     )
 
     seller = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", store["seller_id"])
@@ -1129,7 +1122,6 @@ async def checkout(slug: str, body: OrderIn, request: Request):
         "amount": total,
         "razorpayOrderId": rp_order_id,
         "razorpayKeyId": rp_key_id,
-        "needsMockPay": mock_payment,
     }
 
 
@@ -1169,18 +1161,6 @@ async def buyer_order_detail(order_id: str):
     if not o:
         raise HTTPException(status_code=404, detail="Order not found")
     return public_order(o, for_buyer=True)
-
-
-@api.post("/orders/{order_id}/mock-pay")
-async def mock_pay_order(order_id: str):
-    o = await db.fetch_one("SELECT * FROM orders WHERE order_id = $1", order_id)
-    if not o:
-        raise HTTPException(status_code=404, detail="Order not found")
-    if o["status"] != "placed":
-        return {"status": o["status"]}
-    paid_at = iso(now())
-    await db.execute("UPDATE orders SET status = 'paid', paid_at = $1 WHERE order_id = $2", paid_at, order_id)
-    return {"status": "paid"}
 
 
 @api.post("/webhooks/razorpay")
@@ -1426,63 +1406,7 @@ app.add_middleware(
 )
 
 
-# ======================= Startup: indexes + seed =======================
-async def ensure_seller(email, password, name, slug, store_name):
-    u = await db.fetch_one("SELECT * FROM users WHERE email = $1", email.lower())
-    if not u:
-        user_id = new_id("user")
-        await db.execute(
-            """
-            INSERT INTO users (user_id, email, name, password_hash, role, auth_provider, subscription_status, created_at)
-            VALUES ($1, $2, $3, $4, 'seller', 'password', 'active', $5)
-            """,
-            user_id, email.lower(), name, security.hash_password(password), iso(now())
-        )
-        u = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", user_id)
-    
-    s = await db.fetch_one("SELECT * FROM stores WHERE seller_id = $1", u["user_id"])
-    if not s:
-        existing_slug = await db.fetch_one("SELECT * FROM stores WHERE slug = $1", slug)
-        if not existing_slug:
-            await db.execute(
-                """
-                INSERT INTO stores (store_id, seller_id, name, slug, bio, acceptance_window_minutes, created_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                """,
-                new_id("store"), u["user_id"], store_name, slug,
-                "Handcrafted goods shipped fresh directly to your door.", DEFAULT_WINDOW_MIN, iso(now())
-            )
-    return u
-
-
-async def seed():
-    admin_email = os.environ.get("ADMIN_EMAIL", "dassantana135@gmail.com")
-    admin_pass = os.environ.get("ADMIN_PASSWORD", "Admin@StallWise2026")
-    owner = await ensure_seller(admin_email, admin_pass, "Stall Wise Merchant", "demo-store", "Demo Store")
-    await ensure_seller("artisan@stallwise.in", "Artisan@2026", "Artisan Studio", "artisan-shop", "Artisan Shop")
-
-    prod_count = await db.fetch_val("SELECT COUNT(*) FROM products WHERE store_slug = 'demo-store'")
-    if not prod_count:
-        await db.execute(
-            """
-            INSERT INTO products (product_id, seller_id, store_slug, title, description, price, stock, option_groups, active, created_at)
-            VALUES 
-            ($1, $2, 'demo-store', 'Organic Honey (500g)', 'Raw wildflower honey, harvested locally.', 350.0, 40, '[]'::jsonb, TRUE, $3),
-            ($4, $2, 'demo-store', 'Cotton Artisan T-Shirt', 'Handmade, soft breathable organic cotton.', 600.0, 50, $5, TRUE, $3)
-            """,
-            new_id("prod"), owner["user_id"], iso(now()),
-            new_id("prod"),
-            json.dumps([{
-                "name": "Size",
-                "options": [
-                    {"label": "S", "priceDelta": 0, "stock": 10},
-                    {"label": "M", "priceDelta": 0, "stock": 25},
-                    {"label": "L", "priceDelta": 50, "stock": 15}
-                ]
-            }])
-        )
-
-
+# ======================= Startup =======================
 @app.on_event("startup")
 async def on_startup():
     try:
@@ -1494,12 +1418,6 @@ async def on_startup():
         logger.info("Object storage initialized")
     except Exception as e:
         logger.error(f"storage init failed: {e}")
-    try:
-        if db._pool:
-            await seed()
-            logger.info("Stall Wise startup seed complete")
-    except Exception as e:
-        logger.error(f"seed error: {e}")
 
 
 @app.on_event("shutdown")

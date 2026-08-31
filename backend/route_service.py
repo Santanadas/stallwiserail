@@ -9,10 +9,8 @@ Onboarding flow (Razorpay Route):
   2. POST  /v2/accounts/:id/products             -> request the "route" product (pcfg_...)
   3. PATCH /v2/accounts/:id/products/:pcfg_id    -> register settlement bank account
 
-When MOCK_ROUTE=true or platform keys are missing we return a mock linked
-account so the onboarding UI still works end-to-end without touching Razorpay.
-If a live call fails (Route not enabled, validation error, network) we also
-fall back to a mock account so seller onboarding never hard-fails.
+Live-only: any failure (Route not enabled, validation error, network) raises
+``RouteError`` so the caller can surface the real reason to the seller.
 """
 import os
 import logging
@@ -26,14 +24,14 @@ RZP_BASE = "https://api.razorpay.com/v2"
 _TIMEOUT = 15
 
 
+class RouteError(Exception):
+    """Raised when Razorpay Route onboarding cannot be completed."""
+
+
 def _keys():
     kid = os.environ.get("RAZORPAY_KEY_ID") or "rzp_live_TVs3r96Uvj8B1S"
     ksec = os.environ.get("RAZORPAY_KEY_SECRET") or "xM9IugMkJB74bdDbH7UWh3Zi"
     return kid, ksec
-
-
-def _mock_enabled() -> bool:
-    return (os.environ.get("MOCK_ROUTE") or "").lower() == "true"
 
 
 def platform_client():
@@ -43,17 +41,7 @@ def platform_client():
     return razorpay.Client(auth=(kid, ksec)), kid, ksec
 
 
-def _mock_account(reference_id: str) -> dict:
-    return {
-        "mode": "mock",
-        "account_id": "mock_acc_" + reference_id,
-        "status": "mock_pending",
-        "product_config_id": None,
-        "settlement_status": "mock",
-    }
-
-
-def _api(method: str, path: str, json_body: dict) -> requests.Response:
+def _api(method: str, path: str, json_body: dict | None = None) -> requests.Response:
     kid, ksec = _keys()
     return requests.request(
         method,
@@ -79,22 +67,21 @@ def create_linked_account(payload: dict) -> dict:
 
     Expected ``payload`` keys:
       email, phone, reference_id, legal_business_name, business_type,
-      contact_name, and (for settlements) beneficiary_name, account_number, ifsc.
+      contact_name, beneficiary_name, account_number, ifsc.
       An optional ``profile`` dict overrides the default category.
 
-    Returns ``{mode, account_id, status, product_config_id, settlement_status}``.
-    ``mode`` is ``"razorpay"`` for a real linked account, ``"mock"`` otherwise.
+    Returns ``{mode, account_id, status, product_config_id, settlement_status}``
+    (``mode`` is always ``"razorpay"``). Raises ``RouteError`` on failure.
     """
-    reference_id = payload["reference_id"]
     kid, ksec = _keys()
-    if _mock_enabled() or not kid or not ksec:
-        return _mock_account(reference_id)
+    if not kid or not ksec:
+        raise RouteError("Platform payment gateway is not configured.")
 
     account_body = {
         "email": payload["email"],
         "phone": payload["phone"],
         "type": "route",
-        "reference_id": reference_id,
+        "reference_id": payload["reference_id"],
         "legal_business_name": payload["legal_business_name"],
         "business_type": (payload.get("business_type") or "individual"),
         "contact_name": payload["contact_name"],
@@ -106,18 +93,19 @@ def create_linked_account(payload: dict) -> dict:
 
     try:
         r = _api("POST", "/accounts", account_body)
-    except Exception as e:
+    except requests.RequestException as e:
         logger.error(f"Route /accounts network error: {e}")
-        return _mock_account(reference_id)
+        raise RouteError("Could not reach the payment gateway. Please try again.")
 
     if r.status_code not in (200, 201):
-        logger.warning(f"Route /accounts {r.status_code}: {_err_text(r)}; using provisional account")
-        return _mock_account(reference_id)
+        msg = _err_text(r)
+        logger.warning(f"Route /accounts {r.status_code}: {msg}")
+        raise RouteError(msg or "Razorpay rejected the account details.")
 
     account = r.json()
     account_id = account.get("id")
     if not account_id:
-        return _mock_account(reference_id)
+        raise RouteError("Razorpay did not return a linked account id.")
 
     status = account.get("status", "created")
     product_config_id = None
@@ -135,8 +123,10 @@ def create_linked_account(payload: dict) -> dict:
             )
         else:
             logger.warning(f"Route /products {pr.status_code}: {_err_text(pr)}")
-    except Exception as e:
+            raise RouteError(_err_text(pr) or "Could not enable Route for this account.")
+    except requests.RequestException as e:
         logger.error(f"Route product request error: {e}")
+        raise RouteError("Could not reach the payment gateway. Please try again.")
 
     # 3. Register the seller's bank account for settlements.
     if product_config_id and payload.get("account_number") and payload.get("ifsc"):
@@ -162,8 +152,10 @@ def create_linked_account(payload: dict) -> dict:
                 )
             else:
                 logger.warning(f"Route settlement PATCH {sr.status_code}: {_err_text(sr)}")
-        except Exception as e:
+                raise RouteError(_err_text(sr) or "Razorpay rejected the bank account details.")
+        except requests.RequestException as e:
             logger.error(f"Route settlement config error: {e}")
+            raise RouteError("Could not reach the payment gateway. Please try again.")
 
     return {
         "mode": "razorpay",
@@ -176,21 +168,19 @@ def create_linked_account(payload: dict) -> dict:
 
 def fetch_account_status(account_id: str, product_config_id: str | None = None) -> dict:
     """Poll Razorpay for the current activation / settlement state of a linked
-    account. Returns ``{}`` on any error or for mock accounts."""
-    if not account_id or account_id.startswith("mock_acc_"):
-        return {}
-    if _mock_enabled():
+    account. Returns ``{}`` on any error."""
+    if not account_id:
         return {}
     out: dict = {}
     try:
-        r = _api("GET", f"/accounts/{account_id}", {})
+        r = _api("GET", f"/accounts/{account_id}")
         if r.status_code == 200:
             out["status"] = r.json().get("status")
     except Exception as e:
         logger.error(f"Route account fetch error: {e}")
     if product_config_id:
         try:
-            pr = _api("GET", f"/accounts/{account_id}/products/{product_config_id}", {})
+            pr = _api("GET", f"/accounts/{account_id}/products/{product_config_id}")
             if pr.status_code == 200:
                 body = pr.json()
                 out["settlement_status"] = (

@@ -182,6 +182,46 @@ function StoreSection({ store, onChange, user, refreshUser }) {
 }
 
 /* ==========================================================================
+   ACCOUNT SECTION
+   ========================================================================== */
+function AccountSection({ user, onLogout }) {
+  const joined = (() => {
+    try {
+      return user?.created_at ? new Date(user.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  return (
+    <Panel title="Account" subtitle="Your Stall Wise login and session." testId="account-panel">
+      <div className="space-y-5">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="rounded-xl border border-neutral-200 bg-neutral-50/60 p-4">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-400">Email</span>
+            <p className="mt-1 text-sm font-bold text-[#0A0A0A] break-all">{user?.email || "—"}</p>
+          </div>
+          <div className="rounded-xl border border-neutral-200 bg-neutral-50/60 p-4">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-400">Sign-in method</span>
+            <p className="mt-1 text-sm font-bold text-[#0A0A0A] capitalize">
+              {user?.authProvider === "google" ? "Google" : "Email & password"}
+            </p>
+          </div>
+        </div>
+        {joined && (
+          <p className="text-xs text-neutral-500">Member since {joined}.</p>
+        )}
+        <div className="border-t border-neutral-100 pt-4">
+          <Btn variant="danger" data-testid="account-logout-btn" onClick={onLogout}>
+            <LogOut className="h-4 w-4" /> Log out
+          </Btn>
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+/* ==========================================================================
    PAYMENT ROUTE & SETTLEMENT SECTION
    ========================================================================== */
 const IFSC_RE = /^[A-Za-z]{4}0[A-Za-z0-9]{6}$/;
@@ -1131,8 +1171,17 @@ function OrdersSection() {
 }
 
 /* ==========================================================================
-   PRO SUBSCRIPTION PLAN SECTION
+   PLAN & BILLING SECTION
    ========================================================================== */
+const fmtDate = (v) => {
+  if (!v) return null;
+  try {
+    return new Date(v).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  } catch {
+    return null;
+  }
+};
+
 function SubscriptionSection({ onChange }) {
   const { user, checkAuth } = useAuth();
   const [sub, setSub] = useState(null);
@@ -1165,161 +1214,142 @@ function SubscriptionSection({ onChange }) {
     setErrorMsg("");
     setSuccessMsg("");
     setSubscribing(interval);
-    console.log("[StallWise Sub] Starting subscription flow for:", interval);
     try {
-      console.log("[StallWise Sub] Calling /subscription/create...");
       const { data } = await api.post("/subscription/create", { interval });
-      console.log("[StallWise Sub] Server response:", JSON.stringify(data));
-
-      console.log("[StallWise Sub] Live mode — loading Razorpay checkout.js...");
       const ok = await loadScript();
-      console.log("[StallWise Sub] Razorpay script loaded:", ok, "window.Razorpay:", !!window.Razorpay);
       if (!ok || !window.Razorpay) {
-        setErrorMsg("Could not load payment checkout script. Please check your internet connection and try again.");
+        setErrorMsg("Could not load the payment window. Check your connection and try again.");
         setSubscribing(null);
         return;
       }
 
-      const options = {
+      const rzp = new window.Razorpay({
         key: data.keyId,
         order_id: data.orderId,
         amount: data.amount * 100,
         currency: data.currency || "INR",
         name: "Stall Wise",
-        description: `${data.tier} (${interval})`,
+        description: `${data.tier} · ${interval}`,
         prefill: { email: user?.email || "", name: user?.name || "" },
         theme: { color: "#FF4F00" },
-        modal: {
-          ondismiss: () => {
-            console.log("[StallWise Sub] User dismissed Razorpay modal");
-            setSubscribing(null);
-          },
-        },
+        modal: { ondismiss: () => setSubscribing(null) },
         handler: async (res) => {
-          console.log("[StallWise Sub] Payment success, verifying...", res);
           try {
             await api.post("/subscription/verify-payment", {
               razorpay_order_id: res.razorpay_order_id,
               razorpay_payment_id: res.razorpay_payment_id,
               razorpay_signature: res.razorpay_signature,
             });
-            setSuccessMsg(`🎉 Stall Wise Pro (${interval}) is now active!`);
+            setSuccessMsg(`Stall Wise Pro (${interval}) is now active.`);
             await load();
-            if (checkAuth) await checkAuth();
-            if (onChange) onChange();
+            await checkAuth?.();
+            onChange?.();
           } catch (e) {
-            console.error("[StallWise Sub] Verify error:", e);
             setErrorMsg(formatApiError(e.response?.data?.detail) || "Payment verification failed.");
           } finally {
             setSubscribing(null);
           }
         },
-      };
-
-      console.log("[StallWise Sub] Opening Razorpay checkout with key:", data.keyId, "order:", data.orderId);
-      const rzp = new window.Razorpay(options);
-      rzp.on("payment.failed", function (response) {
-        console.error("[StallWise Sub] Payment failed:", response.error);
+      });
+      rzp.on("payment.failed", (response) => {
         setErrorMsg(response.error?.description || "Payment failed. Please try again.");
         setSubscribing(null);
       });
       rzp.open();
     } catch (e) {
-      console.error("[StallWise Sub] Subscribe error:", e, e.response?.data);
-      setErrorMsg(formatApiError(e.response?.data?.detail) || "Failed to start checkout. Please try again.");
+      setErrorMsg(formatApiError(e.response?.data?.detail) || "Could not start checkout. Please try again.");
       setSubscribing(null);
     }
   };
 
   const active = (sub?.subscriptionStatus || user?.subscriptionStatus) === "active";
+  const monthly = sub?.plans?.monthly ?? 199;
+  const yearly = sub?.plans?.yearly ?? 1499;
+  const commissionPct = Math.round(((sub?.commissionRate ?? 0.1) * 100));
+  const renews = fmtDate(sub?.subscriptionExpiresAt);
+  const busy = Boolean(subscribing);
 
   return (
     <Panel
-      title="Store Plan & Commission Options"
-      subtitle="Choose between the Free Plan (10% commission on sales) or Stall Wise Pro (ad-free storefront)."
+      title="Plan & Billing"
+      subtitle="Free Plan takes a commission on each sale. Stall Wise Pro removes storefront ads."
       testId="subscription-panel"
       action={
         <span
           data-testid="sub-status"
-          className={`rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-wider ${
-            active
-              ? "bg-emerald-900 text-emerald-100 border-emerald-700"
-              : "bg-neutral-100 text-neutral-700 border-neutral-200"
+          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-wider ${
+            active ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-neutral-100 text-neutral-600 border-neutral-200"
           }`}
         >
-          {active ? "⚡ Pro Active (Ad-Free Storefront)" : "Free Plan (10% Commission)"}
+          {active ? <><Sparkles className="h-3.5 w-3.5" /> Pro</> : "Free Plan"}
         </span>
       }
     >
       <div className="space-y-6">
+        {/* Current plan summary */}
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-neutral-50/60 p-4">
+          <div>
+            <p className="text-sm font-bold text-[#0A0A0A]">
+              {active ? "Stall Wise Pro" : "Free Plan"}
+              {active && sub?.subscriptionInterval ? ` · ${sub.subscriptionInterval}` : ""}
+            </p>
+            <p className="mt-0.5 text-xs text-neutral-500">
+              {active
+                ? renews ? `Renews ${renews}` : "Active"
+                : `${commissionPct}% platform commission on each completed sale`}
+            </p>
+          </div>
+        </div>
+
         <div className="grid gap-5 sm:grid-cols-2">
-          {/* Monthly Card */}
+          {/* Monthly */}
           <div className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-2xs transition-all hover:border-neutral-300">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">Monthly Pro</span>
-              <span className="rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold">Ad-Free</span>
-            </div>
+            <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">Monthly</span>
             <p className="mt-3 text-3xl font-black text-[#0A0A0A]">
-              ₹{sub?.plans?.monthly || 199}
-              <span className="text-xs font-medium text-neutral-500"> / month</span>
+              ₹{monthly}<span className="text-xs font-medium text-neutral-500"> / month</span>
             </p>
             <ul className="mt-4 space-y-2 text-xs text-neutral-600">
-              <li className="flex items-center gap-2">
-                <Check className="h-3.5 w-3.5 text-emerald-600" /> Ad-Free Storefront (Remove all platform ads)
-              </li>
-              <li className="flex items-center gap-2">
-                <Check className="h-3.5 w-3.5 text-emerald-600" /> Direct bank settlements
-              </li>
-              <li className="flex items-center gap-2">
-                <Check className="h-3.5 w-3.5 text-emerald-600" /> Verified Pro Seller Badge & QR code
-              </li>
+              <li className="flex items-center gap-2"><Check className="h-3.5 w-3.5 text-emerald-600" /> Ad-free storefront</li>
+              <li className="flex items-center gap-2"><Check className="h-3.5 w-3.5 text-emerald-600" /> Direct bank settlements</li>
+              <li className="flex items-center gap-2"><Check className="h-3.5 w-3.5 text-emerald-600" /> Pro seller badge</li>
             </ul>
-            <div className="mt-6">
-              <Btn 
-                variant="outline" 
-                data-testid="sub-monthly-btn" 
-                disabled={Boolean(subscribing)}
-                onClick={() => subscribe("monthly")} 
-                className="w-full"
-              >
-                {subscribing === "monthly" ? "Opening Checkout…" : active ? "Switch to Monthly (₹199/mo)" : "Upgrade to Pro Monthly (₹199)"}
-              </Btn>
-            </div>
+            <Btn
+              variant="outline"
+              data-testid="sub-monthly-btn"
+              disabled={busy || (active && sub?.subscriptionInterval === "monthly")}
+              onClick={() => subscribe("monthly")}
+              className="mt-6 w-full"
+            >
+              {subscribing === "monthly" ? "Opening checkout…" : active && sub?.subscriptionInterval === "monthly" ? "Current plan" : `Choose Monthly · ₹${monthly}`}
+            </Btn>
           </div>
 
-          {/* Yearly Card */}
+          {/* Yearly */}
           <div className="relative overflow-hidden rounded-2xl border-2 border-neutral-900 bg-neutral-900 p-6 text-white shadow-md">
             <div className="absolute -right-8 -top-8 h-28 w-28 rounded-full bg-[#FF4F00]/20 blur-2xl pointer-events-none" />
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-neutral-400">Annual Pro Plan</span>
-              <span className="rounded-full bg-[#FF4F00] px-2.5 py-0.5 text-[10px] font-bold text-white">Save ₹889 (~37% off)</span>
+              <span className="text-xs font-bold uppercase tracking-wider text-neutral-400">Annual</span>
+              <span className="rounded-full bg-[#FF4F00] px-2.5 py-0.5 text-[10px] font-bold text-white">
+                Save ₹{Math.max(0, monthly * 12 - yearly)}
+              </span>
             </div>
             <p className="mt-3 text-3xl font-black text-white">
-              ₹{sub?.plans?.yearly || 1499}
-              <span className="text-xs font-medium text-neutral-400"> / year</span>
+              ₹{yearly}<span className="text-xs font-medium text-neutral-400"> / year</span>
             </p>
             <ul className="mt-4 space-y-2 text-xs text-neutral-300">
-              <li className="flex items-center gap-2">
-                <Check className="h-3.5 w-3.5 text-[#FF4F00]" /> Ad-Free Storefront all year long
-              </li>
-              <li className="flex items-center gap-2">
-                <Check className="h-3.5 w-3.5 text-[#FF4F00]" /> Save ₹889 compared to monthly billing
-              </li>
-              <li className="flex items-center gap-2">
-                <Check className="h-3.5 w-3.5 text-[#FF4F00]" /> Priority customer and dispute resolution
-              </li>
+              <li className="flex items-center gap-2"><Check className="h-3.5 w-3.5 text-[#FF4F00]" /> Everything in Monthly</li>
+              <li className="flex items-center gap-2"><Check className="h-3.5 w-3.5 text-[#FF4F00]" /> Two months free vs monthly</li>
+              <li className="flex items-center gap-2"><Check className="h-3.5 w-3.5 text-[#FF4F00]" /> Priority dispute resolution</li>
             </ul>
-            <div className="mt-6">
-              <Btn 
-                variant="primary" 
-                data-testid="sub-yearly-btn" 
-                disabled={Boolean(subscribing)}
-                onClick={() => subscribe("yearly")} 
-                className="w-full"
-              >
-                {subscribing === "yearly" ? "Opening Checkout…" : "Upgrade Annual (₹1,499/yr)"}
-              </Btn>
-            </div>
+            <Btn
+              variant="primary"
+              data-testid="sub-yearly-btn"
+              disabled={busy || (active && sub?.subscriptionInterval === "yearly")}
+              onClick={() => subscribe("yearly")}
+              className="mt-6 w-full"
+            >
+              {subscribing === "yearly" ? "Opening checkout…" : active && sub?.subscriptionInterval === "yearly" ? "Current plan" : `Choose Annual · ₹${yearly}`}
+            </Btn>
           </div>
         </div>
 
@@ -1522,80 +1552,53 @@ export default function Dashboard() {
       />
 
       {/* ====================================================================
-          EXECUTIVE COMMAND TOPBAR
+          TOPBAR
           ==================================================================== */}
       <header className="sticky top-0 z-40 border-b border-neutral-200/80 bg-white/90 backdrop-blur-md">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
-          {/* Logo & Live Store Pill */}
-          <div className="flex items-center gap-3.5">
-            <Link to="/" className="mk-head text-lg font-black tracking-tight" data-testid="dashboard-brand-logo">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
+          <div className="flex items-center gap-3 min-w-0">
+            <Link to="/" className="mk-head text-lg font-black tracking-tight shrink-0" data-testid="dashboard-brand-logo">
               STALL WISE<span className="text-[#FF4F00]">.</span>
             </Link>
-
             {store && (
-              <div className="hidden sm:flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50/70 px-3 py-1 text-xs font-bold text-emerald-800">
-                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span>Live Store</span>
-                <span className="text-emerald-400 font-normal">|</span>
-                <span className="font-mono text-emerald-700">stallwise.in/{store.slug}</span>
-              </div>
+              <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50/70 px-2.5 py-1 text-xs font-bold text-emerald-800">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                Live
+              </span>
             )}
-            {/* Quick Upgrade Button if not Pro */}
-            {user?.subscriptionStatus !== "active" && (
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab("payouts");
-                  window.scrollTo({ top: 400, behavior: "smooth" });
-                }}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-[#FF4F00] to-orange-600 px-3.5 py-1.5 text-xs font-black text-white shadow-sm hover:opacity-95 hover:shadow transition-all animate-pulse"
-              >
-                <span>⚡ Upgrade Pro (₹199)</span>
-              </button>
-            )}
+          </div>
 
+          <div className="flex items-center gap-2">
             {store && (
               <>
                 <button
                   type="button"
                   onClick={() => setShowQrModal(true)}
-                  className="hidden md:inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-bold text-neutral-700 shadow-2xs hover:bg-neutral-50 hover:border-neutral-300 transition-all"
-                  title="Generate QR Code"
+                  className="hidden md:inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-bold text-neutral-700 hover:bg-neutral-50 transition-all"
+                  title="Store QR code"
                 >
-                  <QrCode className="h-3.5 w-3.5 text-[#FF4F00]" />
-                  <span>QR Code</span>
+                  <QrCode className="h-3.5 w-3.5 text-[#FF4F00]" /> QR
                 </button>
-
                 <button
                   type="button"
                   onClick={copyShopUrl}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-bold text-neutral-700 shadow-2xs hover:bg-neutral-50 hover:border-neutral-300 transition-all"
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-bold text-neutral-700 hover:bg-neutral-50 transition-all"
                 >
                   {copied ? (
-                    <>
-                      <Check className="h-3.5 w-3.5 text-emerald-600" />
-                      <span className="text-emerald-700">Copied!</span>
-                    </>
+                    <><Check className="h-3.5 w-3.5 text-emerald-600" /><span className="text-emerald-700">Copied</span></>
                   ) : (
-                    <>
-                      <Copy className="h-3.5 w-3.5 text-neutral-500" />
-                      <span>Share</span>
-                    </>
+                    <><Copy className="h-3.5 w-3.5 text-neutral-500" /> Share</>
                   )}
                 </button>
-
                 <Link
                   to={`/${store.slug}`}
                   target="_blank"
-                  className="inline-flex items-center gap-1 rounded-xl bg-neutral-900 px-3.5 py-1.5 text-xs font-bold text-white shadow-2xs hover:bg-[#FF4F00] transition-all"
+                  className="inline-flex items-center gap-1 rounded-xl bg-neutral-900 px-3 py-1.5 text-xs font-bold text-white hover:bg-[#FF4F00] transition-all"
                 >
-                  <span>Visit Shop</span>
-                  <ExternalLink className="h-3 w-3" />
+                  Visit <ExternalLink className="h-3 w-3" />
                 </Link>
               </>
             )}
-
-            {/* Logout Button */}
             <button
               onClick={async () => {
                 await logout();
@@ -1612,81 +1615,53 @@ export default function Dashboard() {
       </header>
 
       {/* ====================================================================
-          EXECUTIVE HERO STOREFRONT BANNER
+          STORE HEADER
           ==================================================================== */}
       <div className="border-b border-neutral-200/80 bg-white">
-        <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-            {/* Store Bio and Avatar */}
-            <div className="flex items-center gap-5">
-              <div className="relative">
-                <div className="h-20 w-20 sm:h-24 sm:w-24 overflow-hidden rounded-2xl border-2 border-neutral-900 bg-neutral-100 shadow-md">
-                  {user?.avatar ? (
-                    <img
-                      src={fileUrl(user.avatar)}
-                      alt={store?.name || "Store Avatar"}
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-neutral-800 to-neutral-950 text-white font-black text-2xl">
-                      {store?.name?.slice(0, 2).toUpperCase() || "SW"}
-                    </div>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab("settings")}
-                  className="absolute -bottom-1.5 -right-1.5 flex h-7 w-7 items-center justify-center rounded-xl bg-[#FF4F00] text-white shadow-sm hover:scale-105 transition-transform"
-                  title="Change Store Avatar"
-                >
-                  <Camera className="h-3.5 w-3.5" />
-                </button>
-              </div>
-
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <h1 className="mk-head text-2xl sm:text-3xl font-black tracking-tight text-[#0A0A0A]">
-                    {store?.name || "My Store"}
-                  </h1>
-                  <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 border border-blue-200 px-2.5 py-0.5 text-[11px] font-bold text-blue-700">
-                    <CheckCircle2 className="h-3 w-3 text-blue-600" /> Verified Merchant
-                  </span>
-                </div>
-
-                <p className="mt-1 text-xs text-neutral-500 font-mono">
-                  stallwise.in/<span className="text-[#FF4F00] font-bold">{store?.slug || "store"}</span>
-                </p>
-
-                {store?.bio && (
-                  <p className="mt-2 text-xs text-neutral-600 line-clamp-2 max-w-xl">
-                    {store.bio}
-                  </p>
+        <div className="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-7 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
+          <div className="flex items-center gap-4">
+            <div className="relative shrink-0">
+              <div className="h-16 w-16 sm:h-20 sm:w-20 overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-100">
+                {user?.avatar ? (
+                  <img src={fileUrl(user.avatar)} alt={store?.name || "Store"} className="h-full w-full object-cover" />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center bg-neutral-900 text-white font-black text-xl">
+                    {store?.name?.slice(0, 2).toUpperCase() || "SW"}
+                  </div>
                 )}
               </div>
-            </div>
-
-            {/* Quick Action Button Group */}
-            <div className="flex items-center gap-2.5 flex-wrap">
-              <Btn
-                variant="primary"
-                onClick={() => {
-                  setShowAddModal(true);
-                  setActiveTab("products");
-                }}
-                className="py-2.5 px-4 shadow-sm"
-              >
-                <Plus className="h-4 w-4" /> Add Product
-              </Btn>
-
               <button
                 type="button"
-                onClick={() => setShowQrModal(true)}
-                className="inline-flex items-center gap-2 rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-2.5 text-xs sm:text-sm font-bold text-neutral-800 shadow-2xs hover:bg-neutral-100 hover:border-neutral-300 transition-all"
+                onClick={() => setActiveTab("settings")}
+                className="absolute -bottom-1.5 -right-1.5 flex h-6 w-6 items-center justify-center rounded-lg bg-[#FF4F00] text-white shadow-sm hover:scale-105 transition-transform"
+                title="Edit store profile"
               >
-                <QrCode className="h-4 w-4 text-[#FF4F00]" /> Store QR
+                <Camera className="h-3 w-3" />
               </button>
             </div>
+            <div className="min-w-0">
+              <h1 className="mk-head text-xl sm:text-2xl font-black tracking-tight text-[#0A0A0A] truncate">
+                {store?.name || "My Store"}
+              </h1>
+              <p className="mt-0.5 text-xs text-neutral-500 font-mono truncate">
+                stallwise.in/<span className="text-[#FF4F00] font-bold">{store?.slug || "store"}</span>
+              </p>
+              {store?.bio && (
+                <p className="mt-1.5 text-xs text-neutral-600 line-clamp-2 max-w-xl">{store.bio}</p>
+              )}
+            </div>
           </div>
+
+          <Btn
+            variant="primary"
+            onClick={() => {
+              setShowAddModal(true);
+              setActiveTab("products");
+            }}
+            className="shrink-0 self-start sm:self-auto"
+          >
+            <Plus className="h-4 w-4" /> Add Product
+          </Btn>
         </div>
       </div>
 
@@ -1709,8 +1684,8 @@ export default function Dashboard() {
             </p>
             <div className="mt-2 flex items-center gap-1.5 text-[11px] font-bold text-emerald-600">
               <TrendingUp className="h-3.5 w-3.5" />
-              <span>Standard Payout Rate</span>
-              <span className="text-neutral-400 font-normal">· Direct to Bank</span>
+              <span>{metrics.completedOrders} completed</span>
+              <span className="text-neutral-400 font-normal">· settled to bank</span>
             </div>
           </div>
 
@@ -1764,7 +1739,7 @@ export default function Dashboard() {
               ₹{metrics.netPayout.toLocaleString()}
             </p>
             <div className="mt-2 text-[11px] font-bold text-neutral-500">
-              {metrics.isPro ? "90% net payout (Pro User)" : "90% net payout (Click to Upgrade Pro →)"}
+              {metrics.isPro ? "Full payout · Pro plan" : "After 10% commission · upgrade to keep 100% →"}
             </div>
           </div>
         </div>
@@ -1772,11 +1747,11 @@ export default function Dashboard() {
         {/* ================= EXECUTIVE NAVIGATION TABS ================= */}
         <div className="flex overflow-x-auto rounded-2xl border border-neutral-200 bg-white p-1.5 shadow-2xs scrollbar-none">
           {[
-            { id: "overview", label: "Executive Overview", icon: TrendingUp },
-            { id: "products", label: `Catalog & Products (${products.length})`, icon: Package },
-            { id: "orders", label: `Fulfillment & Orders (${orderCount})`, icon: ShoppingBag },
-            { id: "payouts", label: "Direct Payouts & Plan", icon: CreditCard },
-            { id: "settings", label: "Store Identity", icon: Settings },
+            { id: "overview", label: "Overview", icon: TrendingUp },
+            { id: "products", label: `Products (${products.length})`, icon: Package },
+            { id: "orders", label: `Orders (${orderCount})`, icon: ShoppingBag },
+            { id: "payouts", label: "Payouts & Plan", icon: CreditCard },
+            { id: "settings", label: "Settings", icon: Settings },
           ].map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -1998,14 +1973,19 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* TAB 5: STORE IDENTITY */}
-          {activeTab === "settings" && store && (
-            <StoreSection
-              store={store}
-              onChange={loadStore}
-              user={user}
-              refreshUser={checkAuth}
-            />
+          {/* TAB 5: SETTINGS */}
+          {activeTab === "settings" && (
+            <div className="space-y-8">
+              {store && (
+                <StoreSection
+                  store={store}
+                  onChange={loadStore}
+                  user={user}
+                  refreshUser={checkAuth}
+                />
+              )}
+              <AccountSection user={user} onLogout={async () => { await logout(); navigate("/login"); }} />
+            </div>
           )}
         </div>
       </main>
