@@ -188,6 +188,11 @@ class PayVerifyIn(BaseModel):
     razorpay_signature: str
 
 
+class DisputeIn(BaseModel):
+    email: EmailStr
+    reason: str = Field(min_length=3, max_length=1000)
+
+
 # ======================= Auth helpers =======================
 _IS_DEV = FRONTEND_URL.startswith("http://localhost") or FRONTEND_URL.startswith("http://127.0.0.1")
 _COOKIE_SECURE = not _IS_DEV
@@ -312,6 +317,9 @@ def public_order(o: Optional[dict], for_buyer: bool = False) -> Optional[dict]:
         "shippedAt": o.get("shipped_at") or o.get("shippedAt"),
         "paidAt": o.get("paid_at") or o.get("paidAt"),
         "deliveredAt": o.get("delivered_at") or o.get("deliveredAt"),
+        "windowExpiresAt": o.get("window_expires_at") or o.get("windowExpiresAt"),
+        "disputeRaised": o["status"] == "disputed",
+        "disputeReason": o.get("dispute_reason") or o.get("disputeReason"),
         "created_at": o["created_at"],
     }
     if for_buyer and o.get("otp_enc"):
@@ -1005,13 +1013,13 @@ async def delete_product(product_id: str, user=Depends(get_current_user)):
 
 # ======================= Orders =======================
 async def finalize_if_expired(order: dict) -> dict:
-    if order.get("status") == "delivered_confirmed":
-        exp = parse_dt(order.get("windowExpiresAt"))
+    """Auto-complete a delivered order once its acceptance window has elapsed
+    with no dispute."""
+    if order.get("status") == "delivered":
+        exp = parse_dt(order.get("window_expires_at") or order.get("windowExpiresAt"))
         if exp and now() >= exp:
-            completed_at = iso(now())
-            await db.execute("UPDATE orders SET status = 'completed' WHERE order_id = $1", order["order_id"])
+            await db.execute("UPDATE orders SET status = 'completed' WHERE order_id = $1 AND status = 'delivered'", order["order_id"])
             order["status"] = "completed"
-            order["completedAt"] = completed_at
     return order
 
 
@@ -1164,6 +1172,7 @@ async def list_orders(status: Optional[str] = Query(None),
         total = await db.fetch_val("SELECT COUNT(*) FROM orders WHERE seller_id = $1", user["user_id"])
         rows = await db.fetch_all("SELECT * FROM orders WHERE seller_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3", user["user_id"], limit, skip)
 
+    rows = [await finalize_if_expired(r) for r in rows]
     orders = [public_order(r) for r in rows]
     return {"orders": orders, "total": total or 0, "page": page, "limit": limit,
             "pages": max(1, ((total or 0) + limit - 1) // limit)}
@@ -1174,6 +1183,7 @@ async def seller_order_detail(order_id: str, user=Depends(get_current_user)):
     o = await db.fetch_one("SELECT * FROM orders WHERE order_id = $1 AND seller_id = $2", order_id, user["user_id"])
     if not o:
         raise HTTPException(status_code=404, detail="Order not found")
+    o = await finalize_if_expired(o)
     return public_order(o)
 
 
@@ -1182,13 +1192,86 @@ async def buyer_order_detail(order_id: str):
     o = await db.fetch_one("SELECT * FROM orders WHERE order_id = $1", order_id)
     if not o:
         raise HTTPException(status_code=404, detail="Order not found")
+    o = await finalize_if_expired(o)
     return public_order(o, for_buyer=True)
+
+
+def _order_pay_secret() -> str:
+    _, _, ksec = route_service.platform_client()
+    return ksec or ""
+
+
+@api.post("/orders/{order_id}/verify-payment")
+async def verify_order_payment(order_id: str, body: PayVerifyIn):
+    """Called by the buyer's browser right after Razorpay checkout succeeds.
+    Verifies the payment signature before marking the order paid."""
+    o = await db.fetch_one("SELECT * FROM orders WHERE order_id = $1", order_id)
+    if not o:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if o["status"] != "placed":
+        return public_order(o, for_buyer=True)
+    if o.get("razorpay_order_id") and o["razorpay_order_id"] != body.razorpay_order_id:
+        raise HTTPException(status_code=400, detail="This payment does not match the order")
+
+    ksec = _order_pay_secret()
+    if not ksec:
+        raise HTTPException(status_code=503, detail="Payments are not configured")
+    msg = f"{body.razorpay_order_id}|{body.razorpay_payment_id}".encode("utf-8")
+    expected = hmac.new(ksec.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, body.razorpay_signature):
+        raise HTTPException(status_code=400, detail="Payment signature verification failed")
+
+    await db.execute(
+        "UPDATE orders SET status = 'paid', paid_at = $1, razorpay_payment_id = $2 WHERE order_id = $3 AND status = 'placed'",
+        iso(now()), body.razorpay_payment_id, order_id
+    )
+    seller = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", o["seller_id"])
+    if seller:
+        asyncio.create_task(email_service.send_payment_email(
+            seller["email"], seller.get("name"), order_id, float(o.get("amount", 0)),
+            f"{FRONTEND_URL}/orders/{order_id}"))
+    o = await db.fetch_one("SELECT * FROM orders WHERE order_id = $1", order_id)
+    return public_order(o, for_buyer=True)
+
+
+@api.post("/order/{order_id}/dispute")
+async def raise_dispute(order_id: str, body: DisputeIn):
+    o = await db.fetch_one("SELECT * FROM orders WHERE order_id = $1", order_id)
+    if not o:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if (o.get("buyer_email") or "").lower() != body.email.lower().strip():
+        raise HTTPException(status_code=403, detail="That email does not match this order")
+    o = await finalize_if_expired(o)
+    if o["status"] == "disputed":
+        return {"status": "disputed"}
+    if o["status"] != "delivered":
+        raise HTTPException(status_code=400, detail="A dispute can only be raised on a delivered order")
+    exp = parse_dt(o.get("window_expires_at"))
+    if exp and now() > exp:
+        raise HTTPException(status_code=400, detail="The acceptance window has already closed")
+
+    reason = security.sanitize_text(body.reason, 1000)
+    await db.execute("UPDATE orders SET status = 'disputed', dispute_reason = $1 WHERE order_id = $2", reason, order_id)
+    seller = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", o["seller_id"])
+    if seller:
+        asyncio.create_task(email_service.send_dispute_email(
+            seller["email"], seller.get("name"), order_id, reason,
+            f"{FRONTEND_URL}/orders/{order_id}"))
+    return {"status": "disputed"}
 
 
 @api.post("/webhooks/razorpay")
 async def razorpay_webhook(request: Request):
     payload = await request.body()
     signature = request.headers.get("X-Razorpay-Signature", "")
+    secret = os.environ.get("RAZORPAY_WEBHOOK_SECRET", "").strip()
+    if secret:
+        expected = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, signature):
+            raise HTTPException(status_code=400, detail="Invalid webhook signature")
+    else:
+        logger.warning("RAZORPAY_WEBHOOK_SECRET is not set — webhook processed without signature verification")
+
     try:
         data = json.loads(payload)
     except Exception:
@@ -1197,10 +1280,13 @@ async def razorpay_webhook(request: Request):
     event = data.get("event")
     payment = data.get("payload", {}).get("payment", {}).get("entity", {})
     rp_order_id = payment.get("order_id") or data.get("payload", {}).get("order", {}).get("entity", {}).get("id")
-    
+    rp_payment_id = payment.get("id")
+
     if rp_order_id and event in ("payment.captured", "order.paid"):
-        await db.execute("UPDATE orders SET status = 'paid', paid_at = $1 WHERE razorpay_order_id = $2 AND status = 'placed'",
-                         iso(now()), rp_order_id)
+        await db.execute(
+            "UPDATE orders SET status = 'paid', paid_at = $1, razorpay_payment_id = COALESCE($2, razorpay_payment_id) WHERE razorpay_order_id = $3 AND status = 'placed'",
+            iso(now()), rp_payment_id, rp_order_id
+        )
     return {"status": "ok"}
 
 
@@ -1239,7 +1325,7 @@ async def confirm_delivery(order_id: str, body: OtpIn, request: Request, user=De
     o = await db.fetch_one("SELECT * FROM orders WHERE order_id = $1 AND seller_id = $2", order_id, user["user_id"])
     if not o:
         raise HTTPException(status_code=404, detail="Order not found")
-    if o["status"] not in ("shipped", "delivered_pending_otp"):
+    if o["status"] != "shipped":
         raise HTTPException(status_code=400, detail="Order not ready for delivery confirmation")
     if o.get("otp_locked"):
         raise HTTPException(status_code=423, detail="OTP locked after too many failed attempts")
@@ -1252,9 +1338,15 @@ async def confirm_delivery(order_id: str, body: OtpIn, request: Request, user=De
             raise HTTPException(status_code=423, detail="Too many failed attempts. Code locked.")
         raise HTTPException(status_code=400, detail=f"Invalid OTP code ({attempts}/{OTP_MAX_ATTEMPTS} attempts)")
 
+    store = await db.fetch_one("SELECT acceptance_window_minutes FROM stores WHERE slug = $1", o["store_slug"])
+    window_min = int((store or {}).get("acceptance_window_minutes") or DEFAULT_WINDOW_MIN)
     delivered_at = iso(now())
-    await db.execute("UPDATE orders SET status = 'delivered', delivered_at = $1 WHERE order_id = $2", delivered_at, order_id)
-    return {"status": "delivered"}
+    window_expires_at = iso(now() + timedelta(minutes=window_min))
+    await db.execute(
+        "UPDATE orders SET status = 'delivered', delivered_at = $1, window_expires_at = $2 WHERE order_id = $3",
+        delivered_at, window_expires_at, order_id
+    )
+    return {"status": "delivered", "windowExpiresAt": window_expires_at}
 
 
 # ======================= Subscription / Billing =======================

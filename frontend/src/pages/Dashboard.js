@@ -909,11 +909,12 @@ function OrdersSection() {
         <div className="flex gap-1.5 overflow-x-auto pb-1 text-xs font-bold scrollbar-none">
           {[
             { id: "all", label: "All Orders" },
+            { id: "placed", label: "Unpaid" },
             { id: "paid", label: "Ready to Ship" },
             { id: "shipped", label: "In Transit" },
-            { id: "delivered_pending_otp", label: "Awaiting OTP" },
-            { id: "delivered_confirmed", label: "Delivered" },
+            { id: "delivered", label: "Delivered" },
             { id: "completed", label: "Completed" },
+            { id: "disputed", label: "Disputed" },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -1337,8 +1338,8 @@ export default function Dashboard() {
   const metrics = useMemo(() => {
     const isPro = user?.subscriptionStatus === "active";
     const grossRevenue = orders.reduce((sum, o) => sum + (o.amount || 0), 0);
-    const completedOrders = orders.filter((o) => o.status === "completed" || o.status === "delivered_confirmed").length;
-    const pendingFulfillment = orders.filter((o) => o.status === "paid" || o.status === "shipped" || o.status === "delivered_pending_otp").length;
+    const completedOrders = orders.filter((o) => o.status === "completed" || o.status === "delivered").length;
+    const pendingFulfillment = orders.filter((o) => o.status === "paid" || o.status === "shipped").length;
     const aov = orders.length > 0 ? Math.round(grossRevenue / orders.length) : 0;
     const netPayout = isPro ? grossRevenue : Math.round(grossRevenue * 0.90);
     const commissionPaidOrSaved = Math.round(grossRevenue * 0.10);

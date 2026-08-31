@@ -17,7 +17,7 @@ export default function Shop() {
   const [err, setErr] = useState("");
   const [selections, setSelections] = useState({});
   const [cart, setCart] = useState([]);
-  const [buyer, setBuyer] = useState({ buyerName: "", buyerEmail: "" });
+  const [buyer, setBuyer] = useState({ buyerName: "", buyerEmail: "", buyerPhone: "" });
   const [placing, setPlacing] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -82,17 +82,77 @@ export default function Shop() {
     return false;
   };
 
+  const loadRazorpay = () =>
+    new Promise((res) => {
+      if (window.Razorpay) return res(true);
+      const s = document.createElement("script");
+      s.src = "https://checkout.razorpay.com/v1/checkout.js";
+      s.onload = () => res(true);
+      s.onerror = () => res(false);
+      document.body.appendChild(s);
+    });
+
   const checkout = async () => {
     setErr("");
     setPlacing(true);
+    const email = buyer.buyerEmail.trim();
     try {
       const { data } = await api.post("/orders", {
-        storeSlug, buyerName: buyer.buyerName, buyerEmail: buyer.buyerEmail,
+        storeSlug,
+        buyerName: buyer.buyerName.trim(),
+        buyerEmail: email,
+        buyerPhone: buyer.buyerPhone.replace(/\D/g, ""),
         items: cart.map((c) => ({ productId: c.productId, quantity: c.quantity, optionSelections: c.optionSelections })),
       });
-      navigate(`/order/${data.orderId}?email=${encodeURIComponent(buyer.buyerEmail)}`);
-    } catch (e) { setErr(formatApiError(e.response?.data?.detail)); }
-    finally { setPlacing(false); }
+
+      const orderId = data.orderId;
+      const goToOrder = () => navigate(`/order/${orderId}?email=${encodeURIComponent(email)}`);
+
+      if (!data.razorpayOrderId) {
+        goToOrder();
+        return;
+      }
+
+      const ok = await loadRazorpay();
+      if (!ok || !window.Razorpay) {
+        setErr("Could not load the payment window. Your order was saved — open it to pay.");
+        goToOrder();
+        return;
+      }
+
+      const rzp = new window.Razorpay({
+        key: data.razorpayKeyId,
+        order_id: data.razorpayOrderId,
+        amount: Math.round((data.amount || cartTotal) * 100),
+        currency: "INR",
+        name: shop?.store?.name || "Stall Wise",
+        description: `Order ${orderId}`,
+        prefill: { name: buyer.buyerName.trim(), email, contact: buyer.buyerPhone.replace(/\D/g, "") },
+        theme: { color: "#FF4F00" },
+        modal: { ondismiss: () => { setPlacing(false); goToOrder(); } },
+        handler: async (res) => {
+          try {
+            await api.post(`/orders/${orderId}/verify-payment`, {
+              razorpay_order_id: res.razorpay_order_id,
+              razorpay_payment_id: res.razorpay_payment_id,
+              razorpay_signature: res.razorpay_signature,
+            });
+          } catch {
+            // Payment went through at Razorpay; the webhook will reconcile.
+          } finally {
+            goToOrder();
+          }
+        },
+      });
+      rzp.on("payment.failed", (r) => {
+        setErr(r.error?.description || "Payment failed. Your order was saved — open it to try again.");
+        setPlacing(false);
+      });
+      rzp.open();
+    } catch (e) {
+      setErr(formatApiError(e.response?.data?.detail));
+      setPlacing(false);
+    }
   };
 
   const productsList = Array.isArray(shop?.products) ? shop.products : [];
@@ -325,11 +385,23 @@ export default function Shop() {
                       className="mt-1.5 w-full min-h-[44px] border-2 border-[#0A0A0A] bg-white px-3 py-2.5 text-base outline-none focus:border-[#FF4F00] sm:text-sm"
                     />
                   </label>
+                  <label className="block sm:col-span-2">
+                    <span className="text-xs font-bold uppercase tracking-widest text-[#525252]">Your phone</span>
+                    <input
+                      data-testid="buyer-phone"
+                      inputMode="tel"
+                      value={buyer.buyerPhone || ""}
+                      onChange={(e) => setBuyer({ ...buyer, buyerPhone: e.target.value })}
+                      placeholder="10-digit mobile number"
+                      className="mt-1.5 w-full min-h-[44px] border-2 border-[#0A0A0A] bg-white px-3 py-2.5 text-base outline-none focus:border-[#FF4F00] sm:text-sm"
+                    />
+                  </label>
                 </div>
                 <div className="mt-6">
-                  <Btn variant="primary" data-testid="checkout-btn" onClick={checkout} disabled={placing || !buyer.buyerName || !buyer.buyerEmail} className="w-full sm:w-auto min-h-[48px]">
-                    {placing ? "Placing…" : <>Place order <ArrowRight className="h-4 w-4" /></>}
+                  <Btn variant="primary" data-testid="checkout-btn" onClick={checkout} disabled={placing || !buyer.buyerName || !buyer.buyerEmail || buyer.buyerPhone.replace(/\D/g, "").length < 8} className="w-full sm:w-auto min-h-[48px]">
+                    {placing ? "Processing…" : <>Pay ₹{cartTotal} <ArrowRight className="h-4 w-4" /></>}
                   </Btn>
+                  <p className="mt-2 text-xs text-[#525252]">Secure payment via Razorpay — your money goes straight to the seller.</p>
                 </div>
               </>
             )}

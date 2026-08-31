@@ -74,15 +74,10 @@ const STATUS_CONFIG = {
     dot: "bg-purple-500",
     label: "Shipped",
   },
-  delivered_pending_otp: {
-    bg: "bg-orange-50 text-orange-700 border-orange-200",
-    dot: "bg-orange-500 animate-pulse",
-    label: "Awaiting OTP Handover",
-  },
-  delivered_confirmed: {
+  delivered: {
     bg: "bg-emerald-50 text-emerald-700 border-emerald-200",
     dot: "bg-emerald-500",
-    label: "Delivered (OTP Verified)",
+    label: "Delivered · OTP verified",
   },
   completed: {
     bg: "bg-neutral-900 text-white border-neutral-900",

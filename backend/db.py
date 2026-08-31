@@ -179,6 +179,8 @@ def _init_sqlite_schema(conn: sqlite3.Connection):
         shipped_at TEXT,
         paid_at TEXT,
         delivered_at TEXT,
+        window_expires_at TEXT,
+        dispute_reason TEXT,
         created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_orders_seller ON orders(seller_id);
@@ -230,6 +232,10 @@ _COLUMN_MIGRATIONS: Dict[str, Dict[str, str]] = {
     },
     "products": {
         "images": "TEXT DEFAULT '[]'",
+    },
+    "orders": {
+        "window_expires_at": "TEXT",
+        "dispute_reason": "TEXT",
     },
 }
 

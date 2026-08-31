@@ -113,17 +113,18 @@ export default function OrderDetail() {
               </ul>
             </dd>
           </div>
-          <div>
-            <dt className="text-xs font-bold uppercase tracking-widest text-[#525252]">Acceptance window</dt>
-            <dd className="mt-1 text-sm">{order.acceptanceWindowMinutes} min</dd>
-          </div>
+          {order.paidAt && (
+            <div>
+              <dt className="text-xs font-bold uppercase tracking-widest text-[#525252]">Payment</dt>
+              <dd className="mt-1 text-sm">Paid · settling to your bank</dd>
+            </div>
+          )}
         </dl>
       </Panel>
 
       {(order.status === "paid" ||
         order.status === "shipped" ||
-        order.status === "delivered_pending_otp" ||
-        order.status === "delivered_confirmed") && (
+        order.status === "delivered") && (
         <Panel title="Delivery" testId="order-actions-panel">
           <div className="flex flex-wrap gap-3">
             {order.status === "paid" && (
@@ -131,14 +132,9 @@ export default function OrderDetail() {
                 <Truck className="h-4 w-4" /> Mark shipped (issues OTP to buyer)
               </Btn>
             )}
-            {order.status === "shipped" && (
-              <Btn variant="dark" data-testid="out-for-delivery-btn" onClick={() => act(() => api.post(`/orders/${order.order_id}/out-for-delivery`))}>
-                Out for delivery
-              </Btn>
-            )}
           </div>
 
-          {(order.status === "shipped" || order.status === "delivered_pending_otp") && (
+          {order.status === "shipped" && (
             <div className="mt-5 border-2 border-dashed border-neutral-300 p-4 sm:p-5">
               <p className="text-sm text-[#525252]">Ask the buyer for the code they received by email.</p>
               <div className="mt-3 flex flex-wrap items-end gap-3">
@@ -169,7 +165,7 @@ export default function OrderDetail() {
             </div>
           )}
 
-          {order.status === "delivered_confirmed" && order.windowExpiresAt && (
+          {order.status === "delivered" && order.windowExpiresAt && (
             <div className="mt-5 border-2 border-[#0A0A0A] bg-[#FAFAFA] p-5" data-testid="acceptance-window">
               <p className="text-xs font-bold uppercase tracking-widest text-[#525252]">Dispute window closes in</p>
               <div className="mt-1"><Countdown expires={order.windowExpiresAt} /></div>

@@ -9,9 +9,9 @@ const STEPS = [
   { key: "placed", label: "Placed", icon: Package },
   { key: "paid", label: "Paid", icon: CreditCard },
   { key: "shipped", label: "Shipped", icon: Truck },
-  { key: "delivered_confirmed", label: "Delivered", icon: CheckCircle2 },
+  { key: "delivered", label: "Delivered", icon: CheckCircle2 },
 ];
-const ORDER = ["placed", "paid", "shipped", "delivered_pending_otp", "delivered_confirmed", "completed"];
+const ORDER = ["placed", "paid", "shipped", "delivered", "completed"];
 
 function useCountdown(iso) {
   const [left, setLeft] = useState("");
@@ -47,34 +47,57 @@ export default function BuyerOrder() {
 
   const load = useCallback(async () => {
     try {
-      const { data } = await api.get(`/buyer/orders/${orderId}`, { params: { email } });
+      const { data } = await api.get(`/order/${orderId}`);
       setOrder(data);
     } catch (e) { setErr(formatApiError(e.response?.data?.detail)); }
-  }, [orderId, email]);
+  }, [orderId]);
   useEffect(() => { load(); }, [load]);
 
-  const countdown = useCountdown(order?.status === "delivered_confirmed" ? order?.windowExpiresAt : null);
+  const countdown = useCountdown(order?.status === "delivered" ? order?.windowExpiresAt : null);
 
   const pay = async () => {
     setErr(""); setMsg(""); setBusy(true);
     try {
-      if (order.razorpayOrderId) {
-        const options = {
-          key: order.razorpayKeyId, amount: Math.round(order.amount * 100), currency: "INR",
-          order_id: order.razorpayOrderId, name: "Stall Wise",
-          handler: () => { setMsg("Payment submitted. Awaiting confirmation."); setTimeout(load, 2000); },
-          prefill: { name: order.buyerName, email: order.buyerEmail },
-        };
-        new window.Razorpay(options).open();
+      if (!order.razorpayOrderId || !window.Razorpay) {
+        setErr("Payment is not available for this order right now.");
+        setBusy(false);
+        return;
       }
-    } catch (e) { setErr(formatApiError(e.response?.data?.detail)); }
-    finally { setBusy(false); }
+      const rzp = new window.Razorpay({
+        key: order.razorpayKeyId,
+        order_id: order.razorpayOrderId,
+        amount: Math.round(order.amount * 100),
+        currency: "INR",
+        name: "Stall Wise",
+        description: `Order ${order.order_id}`,
+        prefill: { name: order.buyerName, email: order.buyerEmail, contact: order.buyerPhone || "" },
+        theme: { color: "#FF4F00" },
+        modal: { ondismiss: () => setBusy(false) },
+        handler: async (res) => {
+          try {
+            await api.post(`/orders/${orderId}/verify-payment`, {
+              razorpay_order_id: res.razorpay_order_id,
+              razorpay_payment_id: res.razorpay_payment_id,
+              razorpay_signature: res.razorpay_signature,
+            });
+            setMsg("Payment confirmed.");
+          } catch (e) {
+            setMsg("Payment received — confirming shortly.");
+          } finally {
+            setBusy(false);
+            load();
+          }
+        },
+      });
+      rzp.on("payment.failed", (r) => { setErr(r.error?.description || "Payment failed."); setBusy(false); });
+      rzp.open();
+    } catch (e) { setErr(formatApiError(e.response?.data?.detail)); setBusy(false); }
   };
 
   const dispute = async () => {
     setErr(""); setMsg(""); setBusy(true);
     try {
-      await api.post(`/buyer/orders/${orderId}/dispute`, { reason }, { params: { email } });
+      await api.post(`/order/${orderId}/dispute`, { email, reason });
       setMsg("Dispute raised. The seller has been notified.");
       load();
     } catch (e) { setErr(formatApiError(e.response?.data?.detail)); }
@@ -126,7 +149,7 @@ export default function BuyerOrder() {
             <ol className="flex items-center justify-between">
               {STEPS.map((s, i) => {
                 const stepIdx = ORDER.indexOf(s.key);
-                const done = curIdx >= stepIdx || (s.key === "delivered_confirmed" && order.status === "completed");
+                const done = curIdx >= stepIdx || (s.key === "delivered" && order.status === "completed");
                 const Icon = s.icon;
                 return (
                   <li key={s.key} className="flex flex-1 flex-col items-center gap-2 text-center">
@@ -184,7 +207,7 @@ export default function BuyerOrder() {
         )}
 
         {/* Dispute window */}
-        {order.status === "delivered_confirmed" && order.windowExpiresAt && (
+        {order.status === "delivered" && order.windowExpiresAt && (
           <div className="mt-6 border-2 border-[#0A0A0A] bg-white p-6" data-testid="buyer-dispute-section">
             <div className="flex items-center gap-2 text-[#525252]"><Clock className="h-5 w-5" /><span className="text-xs font-bold uppercase tracking-widest">Acceptance window</span></div>
             <p className="mk-head mt-2 text-3xl font-black tracking-tighter" data-testid="buyer-countdown">{countdown}</p>

@@ -110,6 +110,33 @@ async def send_otp_email(buyer_email, buyer_name, otp, order_link):
     return await send_email(to=buyer_email, subject=f"Your {EMAIL_FROM_NAME} delivery code: {otp}", html=_wrap(inner), recipient_name=buyer_name)
 
 
+async def send_payment_email(seller_email, seller_name, order_id, amount, dashboard_link):
+    inner = (
+        f"<h2 style='color:#0A0A0A;margin-top:0;'>💰 Payment received</h2>"
+        f"<p style='font-size:15px;line-height:1.6;'>Hi {escape(seller_name or 'Seller')}, the buyer has paid for order "
+        f"<strong>{escape(str(order_id))}</strong>.</p>"
+        f"<p style='font-size:18px;font-weight:bold;color:#FF4F00;'>₹{amount:.2f}</p>"
+        f"<p style='font-size:14px;color:#525252;'>Your share settles to your linked bank account via Razorpay. "
+        f"Ship the order to issue the buyer's delivery code.</p>"
+        f"<div style='margin-top:24px;'><a href='{escape(dashboard_link)}' style='background-color:#FF4F00;color:#FFFFFF;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;'>Open Order</a></div>"
+    )
+    return await send_email(to=seller_email, subject=f"Payment received on {EMAIL_FROM_NAME} (₹{amount:.2f})",
+                            html=_wrap(inner), recipient_name=seller_name)
+
+
+async def send_dispute_email(seller_email, seller_name, order_id, reason, dashboard_link):
+    inner = (
+        f"<h2 style='color:#0A0A0A;margin-top:0;'>⚠️ A buyer raised a dispute</h2>"
+        f"<p style='font-size:15px;line-height:1.6;'>Hi {escape(seller_name or 'Seller')}, order "
+        f"<strong>{escape(str(order_id))}</strong> has been disputed within its acceptance window.</p>"
+        f"<p style='font-size:14px;color:#525252;'><strong>Reason:</strong> {escape(reason or '')}</p>"
+        f"<p style='font-size:13px;color:#737373;'>Reach out to the buyer to resolve it directly.</p>"
+        f"<div style='margin-top:24px;'><a href='{escape(dashboard_link)}' style='background-color:#0A0A0A;color:#FFFFFF;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;'>Open Order</a></div>"
+    )
+    return await send_email(to=seller_email, subject=f"Dispute raised on {EMAIL_FROM_NAME} order {order_id}",
+                            html=_wrap(inner), recipient_name=seller_name)
+
+
 async def send_reset_email(email, reset_link):
     inner = (
         f"<h2 style='color:#0A0A0A;margin-top:0;'>Reset your password</h2>"
