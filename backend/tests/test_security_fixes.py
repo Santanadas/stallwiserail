@@ -209,3 +209,59 @@ def test_other_gateway_errors_do_not_leak_their_message(seller_with_store, monke
     r = seller_with_store.post("/api/subscription/create", json={"interval": "monthly"})
     assert r.status_code == 502
     assert "internal detail" not in r.json()["detail"]
+
+
+# --- 6. The SPA catch-all answered 200 to everything ------------------------
+SCANNER_PATHS = [
+    "/.env", "/.env.production", "/backend/.env", "/.git/config", "/.git/HEAD",
+    "/.ssh/id_rsa", "/.aws/credentials", "/secrets.json", "/user_secrets.yml",
+    "/wp-login.php", "/phpinfo.php", "/config.php", "/dump.sql", "/backup.tar.gz",
+    "/.svn/wc.db", "/.npmrc", "/.vscode/sftp.json",
+    "/storage/logs/laravel.log", "/docker-compose.yml", "/server.key",
+]
+
+
+@pytest.mark.parametrize("path", SCANNER_PATHS)
+def test_scanner_probes_get_a_real_404(app_client, path):
+    """Production logs showed every one of these answering "200 OK" — the SPA
+    shell, not the real file, but a soft 404 all the same. Google indexes those,
+    and a log where nothing is ever 404 hides genuine failures."""
+    assert app_client.get(path).status_code == 404
+
+
+@pytest.mark.parametrize("path", SCANNER_PATHS)
+def test_scanner_probes_never_returned_real_file_contents(app_client, path):
+    """The important half: confirm no probe ever leaked a secret."""
+    body = app_client.get(path).text
+    for marker in ("RAZORPAY_KEY", "ENCRYPTION_KEY", "JWT_SECRET", "SMTP_PASS",
+                   "BEGIN RSA", "BEGIN OPENSSH", "postgresql://"):
+        assert marker not in body, f"{path} leaked {marker}"
+
+
+@pytest.mark.parametrize("path", ["/", "/shops", "/about", "/some-shop",
+                                  "/some-shop/some-product", "/dashboard", "/login"])
+def test_real_app_routes_still_render(app_client, path):
+    r = app_client.get(path)
+    assert r.status_code == 200
+    assert "<html" in r.text.lower()
+
+
+@pytest.mark.parametrize("path", ["/robots.txt", "/sitemap.xml"])
+def test_the_real_root_files_are_untouched(app_client, path):
+    assert app_client.get(path).status_code == 200
+
+
+def test_unknown_shop_urls_are_noindexed(app_client):
+    """Without this, every mistyped link and scanner probe that looks like a
+    slug becomes an indexable duplicate of the homepage."""
+    for path in ("/no-such-shop", "/no-such-shop/no-such-product", "/actuator/heapdump"):
+        r = app_client.get(path)
+        assert r.status_code == 200, path
+        assert "noindex" in r.text.lower(), path
+
+
+def test_a_real_shop_is_still_indexable(app_client, seller_with_store):
+    make_product(seller_with_store, title="Runner")
+    r = app_client.get(f"/{seller_with_store.store_slug}")
+    assert r.status_code == 200
+    assert "noindex" not in r.text.lower()

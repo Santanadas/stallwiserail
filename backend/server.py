@@ -2066,6 +2066,12 @@ if os.path.isdir(DIST_DIR):
         parts = r.split("/")
         if len(parts) <= 2 and parts[0] not in seo.STATIC_PAGES:
             store = await db.fetch_one("SELECT * FROM stores WHERE slug = $1", parts[0].lower())
+            if not store:
+                # A shop that does not exist. The SPA still renders (the router
+                # shows its own not-found state), but this must never be offered
+                # to a search engine: without noindex, every scanner probe and
+                # mistyped link becomes an indexable duplicate of the homepage.
+                return {**seo.static_meta(""), "canonical": f"{seo.SITE_URL}/{r}", "noindex": True}
             if store:
                 seller = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", store["seller_id"]) or {}
                 if len(parts) == 2:
@@ -2110,6 +2116,27 @@ if os.path.isdir(DIST_DIR):
             logger.error(f"sitemap lookup failed: {e}")
         return Response(content=seo.sitemap_xml(stores, products), media_type="application/xml")
 
+    def _is_spa_route(rel: str) -> bool:
+        """Could this path plausibly be a page in the app?
+
+        Every unmatched path used to fall through to index.html with a 200, so
+        scanners probing /.env, /.git/config, /wp-login.php and the like all got
+        "200 OK". Nothing sensitive was served — the response was always the SPA
+        shell — but Google will happily index a soft 404, and a log where every
+        request is 200 hides real failures.
+
+        App routes are slugs: no dot in the last segment, no dot-directories.
+        Real files under dist/ are matched before this is consulted.
+        """
+        if not rel:
+            return True
+        segments = rel.split("/")
+        if any(seg.startswith(".") for seg in segments):
+            return False           # .env, .git/config, .ssh/id_rsa
+        if "." in segments[-1]:
+            return False           # wp-login.php, dump.sql, backup.tar.gz
+        return True
+
     @app.api_route("/{full_path:path}", methods=["GET", "HEAD"])
     async def serve_spa(full_path: str):
         if full_path.startswith("api") or full_path.startswith("uploads"):
@@ -2122,6 +2149,9 @@ if os.path.isdir(DIST_DIR):
             and os.path.isfile(candidate)
         ):
             return FileResponse(candidate)
+
+        if not _is_spa_route(rel):
+            raise HTTPException(status_code=404, detail="Not found")
 
         base = _base_index()
         if not base:
