@@ -114,6 +114,9 @@ def test_resending_replaces_the_old_code(app_client, seller_with_store):
 
 def test_the_new_code_reaches_the_buyer(app_client, seller_with_store, outbox):
     order_id = shipped_order(app_client, seller_with_store)
+    # Let the dispatch email land before clearing, or it arrives afterwards and
+    # is counted as the resend.
+    drain(app_client)
     outbox.clear()
     seller_with_store.post(f"/api/orders/{order_id}/resend-code")
     drain(app_client)

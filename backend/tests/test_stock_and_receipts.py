@@ -233,3 +233,25 @@ def test_the_webhook_and_the_callback_together_send_one_receipt(
     drain(app_client)
 
     assert len([m for m in outbox if m["to"] == "buyer@example.com"]) == 1
+
+
+def test_abandoned_checkouts_stay_out_of_the_work_list(app_client, seller_with_store):
+    """The orders list is what the seller packs from. A checkout nobody paid for
+    needs nothing doing, and a busy shop makes plenty of them."""
+    product = make_product(seller_with_store, stock=20, paymentMethods=["online", "cod"])
+    real = place_order(app_client, seller_with_store.store_slug,
+                       [{"productId": product["product_id"], "quantity": 1}],
+                       payment_method="cod").json()
+    ghost = start_checkout(app_client, seller_with_store, product)
+    age_order(app_client, ghost["orderId"])
+    sweep(app_client)
+
+    listing = seller_with_store.get("/api/orders").json()
+    ids = [o["order_id"] for o in listing["orders"]]
+    assert real["orderId"] in ids
+    assert ghost["orderId"] not in ids
+    assert listing["total"] == 1
+
+    # But findable when the seller goes looking for them.
+    only = seller_with_store.get("/api/orders", params={"status": "abandoned"}).json()
+    assert [o["order_id"] for o in only["orders"]] == [ghost["orderId"]]

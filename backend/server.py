@@ -2197,8 +2197,18 @@ async def list_orders(status: Optional[str] = Query(None),
         total = await db.fetch_val("SELECT COUNT(*) FROM orders WHERE seller_id = $1 AND status = $2", user["user_id"], status)
         rows = await db.fetch_all("SELECT * FROM orders WHERE seller_id = $1 AND status = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4", user["user_id"], status, limit, skip)
     else:
-        total = await db.fetch_val("SELECT COUNT(*) FROM orders WHERE seller_id = $1", user["user_id"])
-        rows = await db.fetch_all("SELECT * FROM orders WHERE seller_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3", user["user_id"], limit, skip)
+        # This list is a work queue. A checkout nobody paid for needs nothing
+        # doing, and a busy shop generates plenty of them, so they would bury
+        # the orders that do need packing. Still reachable with ?status=abandoned.
+        total = await db.fetch_val(
+            "SELECT COUNT(*) FROM orders WHERE seller_id = $1 AND status != 'abandoned'",
+            user["user_id"])
+        rows = await db.fetch_all(
+            """
+            SELECT * FROM orders WHERE seller_id = $1 AND status != 'abandoned'
+            ORDER BY created_at DESC LIMIT $2 OFFSET $3
+            """,
+            user["user_id"], limit, skip)
 
     rows = [await finalize_if_expired(r) for r in rows]
     orders = [public_order(r) for r in rows]

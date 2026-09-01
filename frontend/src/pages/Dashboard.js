@@ -1146,6 +1146,10 @@ function OrdersSection({ onChanged }) {
             { id: "delivered", label: "Delivered" },
             { id: "completed", label: "Completed" },
             { id: "disputed", label: "Disputed" },
+            // Checkouts nobody paid for. Kept out of the default list because
+            // they need nothing doing, but a seller wondering where their
+            // stock went should be able to find them.
+            { id: "abandoned", label: "Not paid" },
           ].map((tab) => (
             <button
               key={tab.id}
