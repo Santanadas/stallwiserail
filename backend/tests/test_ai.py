@@ -39,12 +39,23 @@ def test_status_requires_auth(app_client):
 
 
 def test_status_reports_disabled_without_an_api_key(seller_with_store):
-    assert seller_with_store.get("/api/ai/status").json() == {"enabled": False}
+    assert seller_with_store.get("/api/ai/status").json() == {
+        "enabled": False, "assistant": False}
 
 
 def test_status_reports_enabled_when_configured(seller_with_store, monkeypatch):
     monkeypatch.setattr(ai_service, "enabled", lambda: True)
-    assert seller_with_store.get("/api/ai/status").json() == {"enabled": True}
+    assert seller_with_store.get("/api/ai/status").json() == {
+        "enabled": True, "assistant": False}
+
+
+def test_a_key_alone_does_not_switch_the_writer_on(monkeypatch):
+    """AI_ENABLED is the switch; a key in the environment is not consent."""
+    monkeypatch.setattr(ai_service, "_API_KEY", "nvapi-whatever")
+    monkeypatch.setattr(ai_service, "FEATURES_ON", False)
+    assert ai_service.enabled() is False
+    monkeypatch.setattr(ai_service, "FEATURES_ON", True)
+    assert ai_service.enabled() is True
 
 
 def test_generate_is_503_when_no_api_key(seller_with_store):

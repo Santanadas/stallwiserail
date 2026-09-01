@@ -95,6 +95,64 @@ async def send_new_order_email(seller_email, seller_name, order, dashboard_link)
     return await send_email(to=seller_email, subject=f"New order on {EMAIL_FROM_NAME} (INR {order.get('amount',0):.2f})", html=_wrap(inner), recipient_name=seller_name)
 
 
+async def send_order_confirmation_email(buyer_email, buyer_name, order, store_name,
+                                        order_link, dispatch_days=2):
+    """The buyer's receipt.
+
+    Until this existed a buyer paid a shop they had reached from a shared link
+    and then heard nothing at all until the parcel shipped — no receipt, no
+    order number, no way back to the order. That silence is exactly where a
+    first-time buyer decides the site cannot be trusted, and it is the one
+    email a marketplace cannot skip.
+    """
+    paid = (order.get("paymentMethod") or "online") != "cod"
+    rows = "".join(
+        f"<tr><td style='padding:6px 0;font-size:14px;'>{escape(str(i.get('title','item')))}"
+        f"<span style='color:#86868B;'> &times;{i.get('quantity',1)}</span></td>"
+        f"<td align='right' style='padding:6px 0;font-size:14px;white-space:nowrap;'>"
+        f"₹{i.get('unitPrice',0) * i.get('quantity',1):,.2f}</td></tr>"
+        for i in order.get("items", [])
+    )
+    delivery = float(order.get("deliveryFee") or 0)
+    delivery_row = (
+        f"<tr><td style='padding:6px 0;font-size:14px;color:#525252;'>Delivery</td>"
+        f"<td align='right' style='padding:6px 0;font-size:14px;'>"
+        f"{'Free' if delivery <= 0 else f'₹{delivery:,.2f}'}</td></tr>"
+    )
+    next_step = (
+        f"{escape(store_name)} is packing your order and will dispatch it within "
+        f"{dispatch_days} working day{'' if dispatch_days == 1 else 's'}. "
+        "We'll email you a delivery code when it ships — show that code to the "
+        "delivery person to confirm you received it."
+    )
+    if not paid:
+        next_step += " You'll pay in cash when it arrives."
+
+    inner = (
+        f"<h2 style='color:#0A0A0A;margin-top:0;'>Thanks for your order</h2>"
+        f"<p style='font-size:15px;line-height:1.6;'>Hi {escape(buyer_name or 'there')}, "
+        f"{escape(store_name)} has your order.</p>"
+        f"<p style='font-size:13px;color:#86868B;margin:0 0 4px 0;'>Order number</p>"
+        f"<p style='font-size:15px;font-weight:bold;margin:0 0 20px 0;'>{escape(str(order.get('order_id','')))}</p>"
+        f"<table role='presentation' width='100%' style='border-top:1px solid #E5E5E7;"
+        f"border-bottom:1px solid #E5E5E7;margin-bottom:12px;'>{rows}{delivery_row}</table>"
+        f"<table role='presentation' width='100%'><tr>"
+        f"<td style='font-size:16px;font-weight:bold;'>{'Paid' if paid else 'To pay on delivery'}</td>"
+        f"<td align='right' style='font-size:18px;font-weight:bold;color:#FF4F00;'>"
+        f"₹{float(order.get('amount', 0)):,.2f}</td></tr></table>"
+        f"<p style='font-size:14px;line-height:1.6;color:#525252;margin-top:22px;'>{next_step}</p>"
+        f"<div style='margin-top:24px;'><a href='{escape(order_link)}' "
+        f"style='background-color:#FF4F00;color:#FFFFFF;padding:12px 24px;border-radius:8px;"
+        f"text-decoration:none;font-weight:bold;display:inline-block;'>Track your order</a></div>"
+        f"<p style='font-size:12px;color:#86868B;margin-top:20px;'>Keep this email — the link above "
+        f"is how you check on your order or report a problem.</p>"
+    )
+    return await send_email(
+        to=buyer_email,
+        subject=f"Your {escape(store_name)} order is confirmed (₹{float(order.get('amount', 0)):,.2f})",
+        html=_wrap(inner), recipient_name=buyer_name)
+
+
 async def send_otp_email(buyer_email, buyer_name, otp, order_link):
     inner = (
         f"<h2 style='color:#0A0A0A;margin-top:0;'>🚚 Your order is on the way!</h2>"

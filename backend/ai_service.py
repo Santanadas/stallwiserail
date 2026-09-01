@@ -59,8 +59,15 @@ class AIUnavailable(RuntimeError):
     """Raised when the feature is switched off or the upstream call fails."""
 
 
+# Off unless switched on. A key sitting in the environment is not consent to
+# spend money on it, and an AI feature that stalls is worse than no AI feature
+# — the seller cannot tell a slow model from a broken site. Set AI_ENABLED=true
+# to bring the description writer back.
+FEATURES_ON = _env("AI_ENABLED").lower() in ("1", "true", "yes")
+
+
 def enabled() -> bool:
-    return bool(_API_KEY)
+    return FEATURES_ON and bool(_API_KEY)
 
 
 def _get_client() -> openai.AsyncOpenAI:
@@ -166,7 +173,7 @@ def _brief(
 async def _image_part(path: str) -> Optional[dict]:
     """A data-URI image part, in OpenAI chat-completions shape."""
     try:
-        data, content_type = await asyncio.to_thread(storage.get_object, path)
+        data, content_type = await storage.get(path)
     except Exception as exc:  # missing file, traversal attempt, unreadable
         logger.info("ai: skipping image %s (%s)", path, exc)
         return None

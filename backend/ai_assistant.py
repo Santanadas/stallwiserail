@@ -38,7 +38,15 @@ CALL_TIMEOUT = float(ai_service._env("AI_ASSISTANT_TIMEOUT", "40"))
 DEADLINE = float(ai_service._env("AI_ASSISTANT_DEADLINE", "75"))
 
 AIUnavailable = ai_service.AIUnavailable
-enabled = ai_service.enabled
+
+# The assistant needs its own switch on top of AI_ENABLED: it is the newest and
+# least proven thing here, and it is the one that can propose changes to a live
+# catalogue. Both must be set for it to appear.
+ASSISTANT_ON = ai_service._env("AI_ASSISTANT_ENABLED").lower() in ("1", "true", "yes")
+
+
+def enabled() -> bool:
+    return ASSISTANT_ON and ai_service.enabled()
 
 _client: Optional[openai.AsyncOpenAI] = None
 

@@ -682,7 +682,8 @@ async def forgot_password(body: ForgotIn, request: Request):
             token, user["user_id"], iso(now() + timedelta(hours=1))
         )
         link = f"{FRONTEND_URL}/reset-password?token={token}"
-        asyncio.create_task(email_service.send_reset_email(email, link))
+        asyncio.create_task(_send_quietly(
+            email_service.send_reset_email(email, link), f"password reset to {email}"))
     return {"ok": True, "message": "If that email exists, a reset link was sent."}
 
 
@@ -910,10 +911,14 @@ async def upload_image(file: UploadFile = File(...), kind: str = Query("product"
     content_type = file.content_type or storage.MIME_TYPES.get(ext, "application/octet-stream")
     path = storage.build_path(user["user_id"], file.filename or f"img.{ext}")
     try:
-        result = await asyncio.to_thread(storage.put_object, path, data, content_type)
+        result = await storage.put(path, data, content_type, owner_id=user["user_id"])
     except Exception as e:
         logger.error(f"upload failed: {e}")
         raise HTTPException(status_code=502, detail="Upload failed, please try again")
+    if not result.get("durable"):
+        # The seller gets their photo, but this needs to be visible to us: on a
+        # container filesystem it is gone at the next deploy.
+        logger.critical("media stored on ephemeral disk — it will be lost on restart: %s", path)
     stored = result.get("path", path)
     if kind == "avatar":
         await db.execute("UPDATE users SET avatar = $1 WHERE user_id = $2", stored, user["user_id"])
@@ -927,20 +932,29 @@ async def delete_avatar(user=Depends(get_current_user)):
 
 
 @api.get("/files/{path:path}")
-async def serve_file(path: str):
+async def serve_file(path: str, request: Request):
     try:
-        data, content_type = await asyncio.to_thread(storage.get_object, path)
-        return Response(
-            content=data,
-            media_type=content_type,
-            headers={
-                "Cache-Control": "public, max-age=86400",
-                "X-Content-Type-Options": "nosniff",
-                "Content-Disposition": "inline",
-            },
-        )
+        data, content_type = await storage.get(path)
     except Exception:
         raise HTTPException(status_code=404, detail="File not found")
+
+    # Every stored name ends in a fresh uuid, so a path's bytes never change.
+    # That makes the response immutable and cacheable for a year, which keeps
+    # a shop full of photos from becoming a read per image per visitor.
+    etag = f'W/"{hashlib.sha256(data).hexdigest()[:32]}"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag,
+                                                  "Cache-Control": "public, max-age=31536000, immutable"})
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "ETag": etag,
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": "inline",
+        },
+    )
 
 
 # ======================= Seller Route (Razorpay Partner) =======================
@@ -1412,7 +1426,7 @@ def _own_upload_keys(user_id: str, paths: List[str]) -> List[str]:
 @api.get("/ai/status")
 async def ai_status(user=Depends(get_current_user)):
     """Lets the product editor hide the button when no API key is configured."""
-    return {"enabled": ai_service.enabled()}
+    return {"enabled": ai_service.enabled(), "assistant": ai_assistant.enabled()}
 
 
 @api.post("/ai/product-description")
@@ -1634,7 +1648,7 @@ def _assistant_tools(user: dict, request: Request):
 @api.post("/ai/assistant")
 async def ai_assistant_chat(body: AssistantIn, request: Request,
                             user=Depends(get_current_user)):
-    if not ai_service.enabled():
+    if not ai_assistant.enabled():
         raise HTTPException(status_code=503,
                             detail="The shop assistant isn't switched on for this site yet.")
     # A turn can fan out into several model calls, so it is the priciest thing a
@@ -1680,6 +1694,9 @@ async def ai_assistant_apply(body: AssistantApplyIn, user=Depends(get_current_us
     bounds run a second time. A proposal that has gone stale — the product was
     deleted meanwhile — fails on its own without stopping the rest.
     """
+    if not ai_assistant.enabled():
+        raise HTTPException(status_code=503,
+                            detail="The shop assistant isn't switched on for this site yet.")
     if not security.check_rate_limit(f"ai_apply:{user['user_id']}", max_requests=120, window_seconds=3600):
         raise HTTPException(status_code=429, detail="Too many changes at once. Try again shortly.")
 
@@ -1785,16 +1802,59 @@ async def _reserve_stock(demand: dict, prod_cache: dict):
             )
 
 
-async def _notify_new_order(store, order_id, total, items, body: OrderIn):
+async def _send_quietly(coro, what: str) -> None:
+    """Run an email send without letting it break anything else.
+
+    email_service raises on a Brevo failure. Fired through create_task with
+    nobody awaiting it, that surfaces as an "exception was never retrieved"
+    warning at garbage-collection time — a real delivery failure reported in a
+    form nobody reads, and never on the line that caused it. A checkout must
+    not fail because an email did, but we do need to know when one does.
+    """
+    try:
+        await coro
+    except Exception as exc:
+        logger.error("email: %s failed (%s)", what, exc)
+
+
+async def _notify_new_order(store, order_id, total, items, body: OrderIn,
+                            delivery: float = 0.0, pay_method: str = "online"):
+    """Tell the seller there is an order, and give the buyer a receipt.
+
+    The buyer half used to be missing entirely: someone paid a shop they had
+    reached from a shared link and heard nothing until dispatch. A confirmation
+    with the order number and a link back to it is the difference between a
+    marketplace and a form that swallowed your money.
+    """
+    order_doc = {
+        "order_id": order_id, "amount": total, "items": items,
+        "deliveryFee": delivery, "paymentMethod": pay_method,
+        "buyerName": body.buyerName, "buyerEmail": body.buyerEmail,
+    }
+    buyer_link = f"{FRONTEND_URL}/orders/{order_id}"
+
+    if body.buyerEmail:
+        asyncio.create_task(_send_quietly(
+            email_service.send_order_confirmation_email(
+                body.buyerEmail, body.buyerName, order_doc,
+                store.get("name") or "the shop", buyer_link,
+                dispatch_days=(store.get("dispatch_days")
+                               if store.get("dispatch_days") is not None else 2)),
+            f"order confirmation to buyer for {order_id}"))
+
+    # The mute lives on the store row, not the user row — and SQLite stores a
+    # boolean as 0, which `is False` does not match. Anything falsy but present
+    # means muted; absent or NULL means the seller never chose, so tell them.
+    mute = store.get("notify_new_order")
+    if mute is not None and not mute:
+        return
     seller = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", store["seller_id"])
     if not seller:
         return
-    order_doc = {
-        "order_id": order_id, "amount": total, "items": items,
-        "buyerName": body.buyerName, "buyerEmail": body.buyerEmail,
-    }
-    asyncio.create_task(email_service.send_new_order_email(
-        seller["email"], seller.get("name"), order_doc, f"{FRONTEND_URL}/orders/{order_id}"))
+    asyncio.create_task(_send_quietly(
+        email_service.send_new_order_email(
+            seller["email"], seller.get("name"), order_doc, buyer_link),
+        f"new-order alert to seller for {order_id}"))
 
 
 @api.post("/shop/{slug}/checkout")
@@ -1889,7 +1949,8 @@ async def checkout(slug: str, body: OrderIn, request: Request):
         await _record_order(order_id, store, body, items, subtotal, created_at, None, None, "cod",
                             delivery=delivery, amount=total)
         await _reserve_stock(demand, prod_cache)
-        await _notify_new_order(store, order_id, total, items, body)
+        await _notify_new_order(store, order_id, total, items, body,
+                                delivery=delivery, pay_method=pay_method)
         return {"orderId": order_id, "amount": total, "subtotal": subtotal,
                 "deliveryFee": delivery, "paymentMethod": "cod",
                 "razorpayOrderId": None, "razorpayKeyId": None}
@@ -1942,7 +2003,8 @@ async def checkout(slug: str, body: OrderIn, request: Request):
     await _record_order(order_id, store, body, items, subtotal, created_at, rp_order_id, rp_key_id,
                         "online", delivery=delivery, amount=total)
     await _reserve_stock(demand, prod_cache)
-    await _notify_new_order(store, order_id, total, items, body)
+    await _notify_new_order(store, order_id, total, items, body,
+                            delivery=delivery, pay_method=pay_method)
 
     return {
         "orderId": order_id,
@@ -2032,9 +2094,11 @@ async def verify_order_payment(order_id: str, body: PayVerifyIn):
     )
     seller = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", o["seller_id"])
     if seller:
-        asyncio.create_task(email_service.send_payment_email(
-            seller["email"], seller.get("name"), order_id, float(o.get("amount", 0)),
-            f"{FRONTEND_URL}/orders/{order_id}"))
+        asyncio.create_task(_send_quietly(
+            email_service.send_payment_email(
+                seller["email"], seller.get("name"), order_id, float(o.get("amount", 0)),
+                f"{FRONTEND_URL}/orders/{order_id}"),
+            f"payment alert to seller for {order_id}"))
     o = await db.fetch_one("SELECT * FROM orders WHERE order_id = $1", order_id)
     return public_order(o, for_buyer=True)
 
@@ -2061,9 +2125,11 @@ async def raise_dispute(order_id: str, body: DisputeIn, request: Request):
     await db.execute("UPDATE orders SET status = 'disputed', dispute_reason = $1 WHERE order_id = $2", reason, order_id)
     seller = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", o["seller_id"])
     if seller:
-        asyncio.create_task(email_service.send_dispute_email(
-            seller["email"], seller.get("name"), order_id, reason,
-            f"{FRONTEND_URL}/orders/{order_id}"))
+        asyncio.create_task(_send_quietly(
+            email_service.send_dispute_email(
+                seller["email"], seller.get("name"), order_id, reason,
+                f"{FRONTEND_URL}/orders/{order_id}"),
+            f"dispute alert to seller for {order_id}"))
     return {"status": "disputed"}
 
 
@@ -2121,7 +2187,10 @@ async def ship_order(order_id: str, user=Depends(get_current_user)):
         """,
         otp_hash, otp_enc, shipped_at, shipped_at, order_id
     )
-    asyncio.create_task(email_service.send_otp_email(o["buyer_email"], o["buyer_name"], otp, f"{FRONTEND_URL}/order/{order_id}"))
+    asyncio.create_task(_send_quietly(
+        email_service.send_otp_email(o["buyer_email"], o["buyer_name"], otp,
+                                     f"{FRONTEND_URL}/order/{order_id}"),
+        f"delivery code to buyer for {order_id}"))
     return {"status": "shipped"}
 
 
@@ -2325,6 +2394,8 @@ async def health_check():
     # The AI features are optional, so a missing key is not "degraded" — but it
     # is the only way to tell from Railway whether the key actually landed.
     out["ai"] = {"enabled": ai_service.enabled(),
+                 "assistant": ai_assistant.enabled(),
+                 "hasKey": bool(ai_service._API_KEY),
                  "model": ai_service.MODEL,
                  "assistantModel": ai_assistant.MODEL}
     # DEV_OTP_ECHO returns login OTPs in API responses. On a public deployment

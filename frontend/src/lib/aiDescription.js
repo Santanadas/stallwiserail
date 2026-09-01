@@ -22,20 +22,34 @@ function authToken() {
 
 let statusPromise = null;
 
-/** Resolves false when no ANTHROPIC_API_KEY is configured, so the UI can hide
- *  the button entirely rather than offering something that 503s. */
-export function aiEnabled() {
+/** The two AI features are switched on independently, so ask once and let each
+ *  caller read the flag it cares about. Both default to off on the server, and
+ *  a feature that is off is hidden rather than offered as something that 503s. */
+function aiStatus() {
   if (!statusPromise) {
     statusPromise = api
       .get("/ai/status")
-      .then((r) => Boolean(r.data?.enabled))
+      .then((r) => ({
+        enabled: Boolean(r.data?.enabled),
+        assistant: Boolean(r.data?.assistant),
+      }))
       .catch(() => {
         // Don't cache a transient failure — let the next open try again.
         statusPromise = null;
-        return false;
+        return { enabled: false, assistant: false };
       });
   }
   return statusPromise;
+}
+
+/** Is the product-description writer available? */
+export function aiEnabled() {
+  return aiStatus().then((s) => s.enabled);
+}
+
+/** Is the shop assistant available? */
+export function assistantEnabled() {
+  return aiStatus().then((s) => s.assistant);
 }
 
 async function readError(res) {

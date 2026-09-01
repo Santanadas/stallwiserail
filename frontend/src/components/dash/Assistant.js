@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Sparkles, X, ArrowUp, Check, Loader2, AlertTriangle } from "lucide-react";
 import api, { formatApiError } from "@/lib/api";
 import { askAssistant } from "@/lib/aiAssistant";
-import { aiEnabled } from "@/lib/aiDescription";
+import { assistantEnabled } from "@/lib/aiDescription";
 import { inr } from "./Pieces";
 
 /**
@@ -123,7 +123,7 @@ export default function Assistant({ onApplied }) {
 
   useEffect(() => {
     let alive = true;
-    aiEnabled().then((on) => alive && setAvailable(on));
+    assistantEnabled().then((on) => alive && setAvailable(on));
     return () => { alive = false; };
   }, []);
 

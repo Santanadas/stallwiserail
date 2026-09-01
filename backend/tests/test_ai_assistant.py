@@ -61,6 +61,9 @@ def model(monkeypatch):
         fake = FakeModel(*script)
         holder["fake"] = fake
         monkeypatch.setattr(ai_service, "enabled", lambda: True)
+        # Both switches are off by default, so a test that wants the assistant
+        # has to say so.
+        monkeypatch.setattr(ai_assistant, "enabled", lambda: True)
         # The assistant builds its own client — shorter timeout, no retries —
         # so patching ai_service's is not enough.
         monkeypatch.setattr(ai_assistant, "_get_client", lambda: fake)
@@ -108,8 +111,28 @@ def test_requires_auth(app_client):
                            ).status_code == 401
 
 
-def test_is_503_without_an_api_key(seller_with_store):
+def test_is_off_unless_switched_on(seller_with_store):
+    """Both flags default to off, so a key sitting in the environment does not
+    put an unproven assistant in front of sellers."""
     assert chat(seller_with_store).status_code == 503
+    assert seller_with_store.get("/api/ai/status").json()["assistant"] is False
+
+
+def test_apply_is_closed_too_when_the_assistant_is_off(seller_with_store):
+    """The read side and the write side switch off together — otherwise the
+    panel disappears while the endpoint that changes prices stays open."""
+    product = make_product(seller_with_store, price=250)
+    r = seller_with_store.post("/api/ai/assistant/apply", json={
+        "proposals": [{"kind": "product", "productId": product["product_id"],
+                       "changes": {"price": 1}}]})
+    assert r.status_code == 503
+    assert seller_with_store.get("/api/products").json()[0]["price"] == 250.0
+
+
+def test_the_assistant_needs_the_master_switch_too(seller_with_store, monkeypatch):
+    monkeypatch.setattr(ai_assistant, "ASSISTANT_ON", True)
+    monkeypatch.setattr(ai_service, "enabled", lambda: False)
+    assert ai_assistant.enabled() is False
 
 
 def test_plain_answer_passes_through(seller_with_store, model):
@@ -237,11 +260,17 @@ def test_a_proposal_for_another_sellers_product_is_refused(seller_with_store, ma
 
 
 # --- Applying re-checks everything ---------------------------------------
+@pytest.fixture()
+def assistant_on(monkeypatch):
+    """Applying is gated on the same switch as chatting."""
+    monkeypatch.setattr(ai_assistant, "enabled", lambda: True)
+
+
 def apply(seller, *proposals):
     return seller.post("/api/ai/assistant/apply", json={"proposals": list(proposals)})
 
 
-def test_apply_writes_the_change(seller_with_store):
+def test_apply_writes_the_change(assistant_on, seller_with_store):
     product = make_product(seller_with_store, title="Lamp", price=250, stock=10)
     r = apply(seller_with_store, {"kind": "product", "productId": product["product_id"],
                                   "changes": {"price": 199, "stock": 4}})
@@ -252,7 +281,7 @@ def test_apply_writes_the_change(seller_with_store):
     assert (saved["price"], saved["stock"]) == (199.0, 4)
 
 
-def test_apply_writes_shop_settings(seller_with_store):
+def test_apply_writes_shop_settings(assistant_on, seller_with_store):
     r = apply(seller_with_store, {"kind": "settings",
                                   "changes": {"deliveryFee": 40, "freeDeliveryAbove": 999,
                                               "dispatchDays": 3}})
@@ -261,7 +290,7 @@ def test_apply_writes_shop_settings(seller_with_store):
     assert (store["deliveryFee"], store["freeDeliveryAbove"], store["dispatchDays"]) == (40.0, 999.0, 3)
 
 
-def test_apply_cannot_touch_another_sellers_product(seller_with_store, make_seller):
+def test_apply_cannot_touch_another_sellers_product(assistant_on, seller_with_store, make_seller):
     """The body is attacker-controlled, so ownership is re-checked here — not
     left to the fact that the assistant would not have proposed it."""
     other = make_seller()
@@ -276,7 +305,7 @@ def test_apply_cannot_touch_another_sellers_product(seller_with_store, make_sell
     assert other.get("/api/products").json()[0]["price"] == 500.0
 
 
-def test_apply_re_runs_the_bounds(seller_with_store):
+def test_apply_re_runs_the_bounds(assistant_on, seller_with_store):
     product = make_product(seller_with_store, price=250)
     r = apply(seller_with_store, {"kind": "product", "productId": product["product_id"],
                                   "changes": {"price": 0}})
@@ -284,7 +313,7 @@ def test_apply_re_runs_the_bounds(seller_with_store):
     assert seller_with_store.get("/api/products").json()[0]["price"] == 250.0
 
 
-def test_apply_ignores_fields_it_does_not_own(seller_with_store, make_seller):
+def test_apply_ignores_fields_it_does_not_own(assistant_on, seller_with_store, make_seller):
     """Only the four product fields the assistant can propose are writable —
     a hand-written body cannot reassign the product to someone else."""
     other = make_seller()
@@ -302,7 +331,7 @@ def test_apply_ignores_fields_it_does_not_own(seller_with_store, make_seller):
     assert saved["sellerId"] != "someone-else"
 
 
-def test_apply_rejects_a_body_with_nothing_writable(seller_with_store):
+def test_apply_rejects_a_body_with_nothing_writable(assistant_on, seller_with_store):
     product = make_product(seller_with_store, price=250)
     r = apply(seller_with_store, {"kind": "product", "productId": product["product_id"],
                                   "changes": {"title": "Hijacked"}})
@@ -310,7 +339,7 @@ def test_apply_rejects_a_body_with_nothing_writable(seller_with_store):
     assert "nothing would happen" in r.json()["failed"][0]["reason"]
 
 
-def test_one_bad_proposal_does_not_stop_the_others(seller_with_store):
+def test_one_bad_proposal_does_not_stop_the_others(assistant_on, seller_with_store):
     good = make_product(seller_with_store, title="Good", price=250)
     r = apply(seller_with_store,
               {"kind": "product", "productId": "prod_missing", "changes": {"price": 10}},
@@ -320,7 +349,7 @@ def test_one_bad_proposal_does_not_stop_the_others(seller_with_store):
     assert seller_with_store.get("/api/products").json()[0]["price"] == 199.0
 
 
-def test_apply_requires_a_known_kind(seller_with_store):
+def test_apply_requires_a_known_kind(assistant_on, seller_with_store):
     r = apply(seller_with_store, {"kind": "sql", "changes": {"price": 1}})
     assert r.status_code == 422
 
@@ -361,7 +390,7 @@ def test_a_runaway_tool_loop_stops(seller_with_store, model):
 
 
 def test_provider_outage_is_a_503_not_a_500(seller_with_store, monkeypatch):
-    monkeypatch.setattr(ai_service, "enabled", lambda: True)
+    monkeypatch.setattr(ai_assistant, "enabled", lambda: True)
 
     async def boom(**kwargs):
         raise ai_assistant.AIUnavailable("The assistant couldn't be reached.")

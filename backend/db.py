@@ -287,6 +287,20 @@ def _init_sqlite_schema(conn: sqlite3.Connection):
         amount NUMERIC NOT NULL,
         plan_id TEXT NOT NULL
     );
+
+    -- Product photos live here, not on disk. The container filesystem is
+    -- rebuilt on every deploy and `uploads` is in .dockerignore, so a seller
+    -- who listed twenty products with photos came back the next day to twenty
+    -- broken images. Bytes in the database survive a restart; nothing else
+    -- available to us does without the seller configuring object storage.
+    CREATE TABLE IF NOT EXISTS media (
+        path TEXT PRIMARY KEY,
+        owner_id TEXT,
+        content_type TEXT NOT NULL,
+        bytes BLOB NOT NULL,
+        size INTEGER NOT NULL,
+        created_at TEXT NOT NULL
+    );
     """)
     _sqlite_migrate(c)
     conn.commit()
@@ -456,6 +470,17 @@ CREATE TABLE IF NOT EXISTS platform_plans (
     interval TEXT PRIMARY KEY,
     amount NUMERIC NOT NULL,
     plan_id TEXT NOT NULL
+);
+
+-- See the note on the SQLite copy: product photos are stored here because the
+-- container filesystem does not survive a deploy.
+CREATE TABLE IF NOT EXISTS media (
+    path TEXT PRIMARY KEY,
+    owner_id TEXT,
+    content_type TEXT NOT NULL,
+    bytes BYTEA NOT NULL,
+    size INTEGER NOT NULL,
+    created_at TEXT NOT NULL
 );
 """
 
