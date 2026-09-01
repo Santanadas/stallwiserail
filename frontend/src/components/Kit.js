@@ -89,6 +89,13 @@ const STATUS_CONFIG = {
     dot: "bg-rose-500",
     label: "Disputed",
   },
+  // The buyer reached the payment screen and never came back, so the stock
+  // this was holding has been returned to the shop.
+  abandoned: {
+    bg: "bg-neutral-100 text-neutral-500 border-neutral-200",
+    dot: "bg-neutral-400",
+    label: "Not paid · stock released",
+  },
 };
 
 export const StatusPill = ({ status, className = "", ...props }) => {

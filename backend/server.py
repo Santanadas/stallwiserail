@@ -1244,6 +1244,9 @@ async def dashboard_summary(request: Request, user=Depends(get_current_user)):
         user["user_id"])
     orders = [public_order(o) for o in order_rows]
     products = [public_product(p) for p in product_rows]
+    # A checkout the buyer never paid for is not an order the seller ever had,
+    # so it must not dilute their totals or their dispute rate.
+    real_orders = [o for o in orders if o["status"] != "abandoned"]
 
     sub_status = await effective_sub_status(user)
     is_pro = sub_status == "active"
@@ -1262,8 +1265,8 @@ async def dashboard_summary(request: Request, user=Depends(get_current_user)):
 
     gross_this = sum(o["amount"] for o in orders if o["status"] in EARNED and bucket(o) == this_month)
     gross_last = sum(o["amount"] for o in orders if o["status"] in EARNED and bucket(o) == last_month)
-    n_this = sum(1 for o in orders if bucket(o) == this_month)
-    n_last = sum(1 for o in orders if bucket(o) == last_month)
+    n_this = sum(1 for o in real_orders if bucket(o) == this_month)
+    n_last = sum(1 for o in real_orders if bucket(o) == last_month)
 
     # Action queue — the things that need the seller today.
     to_ship = [o for o in orders if o["status"] == "paid"]
@@ -1348,10 +1351,12 @@ async def dashboard_summary(request: Request, user=Depends(get_current_user)):
             "netThisMonth": round(gross_this * (1 - rate), 2),
             "commissionThisMonth": round(gross_this * rate, 2),
             "isPro": is_pro,
-            "totalOrders": len(orders),
+            "totalOrders": len(real_orders),
             "repeatBuyers": repeat,
             "uniqueBuyers": len(buyers),
-            "disputeRate": round(len(disputed) / len(orders) * 100, 1) if orders else 0.0,
+            "abandoned": len(orders) - len(real_orders),
+            "disputeRate": (round(len(disputed) / len(real_orders) * 100, 1)
+                            if real_orders else 0.0),
         },
         "money": {
             "held": round(held, 2),
@@ -1380,7 +1385,8 @@ async def dashboard_summary(request: Request, user=Depends(get_current_user)):
             "liveProducts": sum(1 for p in products if p["active"]),
             "draftProducts": sum(1 for p in products if not p["active"]),
             "byStatus": {st: sum(1 for o in orders if o["status"] == st)
-                         for st in ("placed", "paid", "shipped", "delivered", "completed", "disputed")},
+                         for st in ("placed", "paid", "shipped", "delivered",
+                                    "completed", "disputed", "abandoned")},
         },
         "health": {
             "bankVerified": bank_ready,
@@ -1802,6 +1808,123 @@ async def _reserve_stock(demand: dict, prod_cache: dict):
             )
 
 
+# How long an unpaid online checkout holds its stock. Razorpay's own checkout
+# session is far shorter than this, so anything still unpaid after it is a
+# buyer who closed the tab.
+ABANDON_AFTER_MINUTES = int(os.environ.get("ABANDON_AFTER_MINUTES", "45"))
+_SWEEP_SECONDS = 300
+
+
+async def _restore_stock(items) -> None:
+    for it in items or []:
+        pid, qty = it.get("productId"), int(it.get("quantity") or 0)
+        if pid and qty > 0:
+            await db.execute(
+                "UPDATE products SET stock = stock + $1 WHERE product_id = $2 AND stock IS NOT NULL",
+                qty, pid)
+
+
+async def release_abandoned_checkouts() -> int:
+    """Give back the stock held by checkouts that were never paid for.
+
+    Stock is taken at checkout, before the buyer has paid, so that two people
+    cannot buy the last one. Nothing ever gave it back. Every closed payment
+    window — a declined card, a changed mind, a lost connection — took a unit
+    out of the shop permanently, and a seller with ten in stock could quietly
+    reach zero without selling anything. They would see a listing that had
+    stopped selling and no reason for it.
+
+    Assumes one worker, which is what we run. Two sweepers racing could restore
+    the same order twice, so the status guard below is what keeps that bounded.
+    """
+    cutoff = iso(now() - timedelta(minutes=ABANDON_AFTER_MINUTES))
+    rows = await db.fetch_all(
+        """
+        SELECT * FROM orders
+        WHERE status = 'placed' AND payment_method = 'online' AND created_at < $1
+        ORDER BY created_at LIMIT 200
+        """,
+        cutoff)
+
+    released = 0
+    for row in rows:
+        order = public_order(row)
+        await db.execute(
+            "UPDATE orders SET status = 'abandoned' WHERE order_id = $1 AND status = 'placed'",
+            order["order_id"])
+        check = await db.fetch_one("SELECT status FROM orders WHERE order_id = $1",
+                                   order["order_id"])
+        if not check or check["status"] != "abandoned":
+            continue  # someone paid for it in the meantime
+        await _restore_stock(order.get("items"))
+        released += 1
+
+    if released:
+        logger.info("released stock held by %d abandoned checkout(s)", released)
+    return released
+
+
+async def _sweep_forever() -> None:
+    while True:
+        try:
+            await asyncio.sleep(_SWEEP_SECONDS)
+            await release_abandoned_checkouts()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("abandoned-checkout sweep failed")
+
+
+async def _mark_order_paid(order_row: dict, payment_id: Optional[str]) -> bool:
+    """Move an order to paid exactly once, and tell everyone when it happens.
+
+    Two things can report a payment: the buyer's browser returning from
+    Razorpay, and Razorpay's own webhook. On mobile the browser often does not
+    come back at all — the buyer pays, the tab closes, and the webhook is the
+    only witness. That path used to mark the row paid and email nobody, so the
+    buyer got no receipt and the seller was never told they had something to
+    ship. A paid order nobody hears about is a lost sale that looks like theft.
+
+    Both paths come through here now. The `paid_at IS NULL` guard plus the
+    stamp comparison is a compare-and-swap: whoever wins sends the emails, and
+    a buyer who refreshes the callback does not get a second receipt.
+    """
+    if order_row["status"] not in ("placed", "abandoned"):
+        return False
+    was_abandoned = order_row["status"] == "abandoned"
+    order_id = order_row["order_id"]
+    stamp = iso(now())
+
+    await db.execute(
+        """
+        UPDATE orders
+        SET status = 'paid', paid_at = $1,
+            razorpay_payment_id = COALESCE($2, razorpay_payment_id)
+        WHERE order_id = $3 AND status IN ('placed', 'abandoned') AND paid_at IS NULL
+        """,
+        stamp, payment_id, order_id)
+
+    fresh = await db.fetch_one("SELECT * FROM orders WHERE order_id = $1", order_id)
+    if not fresh or fresh["status"] != "paid" or fresh.get("paid_at") != stamp:
+        return False  # somebody else got there first
+
+    if was_abandoned:
+        # We released this order's stock when it looked abandoned; the buyer
+        # paid anyway, so take it back rather than lose a real sale.
+        logger.info("payment arrived for released checkout %s — re-reserving stock", order_id)
+        for it in (public_order(fresh).get("items") or []):
+            pid, qty = it.get("productId"), int(it.get("quantity") or 0)
+            if pid and qty > 0:
+                await db.execute(
+                    "UPDATE products SET stock = stock - $1 WHERE product_id = $2 AND stock >= $3",
+                    qty, pid, qty)
+
+    store = await db.fetch_one("SELECT * FROM stores WHERE seller_id = $1", fresh["seller_id"])
+    if store:
+        await _notify_new_order(store, public_order(fresh))
+    return True
+
+
 async def _send_quietly(coro, what: str) -> None:
     """Run an email send without letting it break anything else.
 
@@ -1817,26 +1940,25 @@ async def _send_quietly(coro, what: str) -> None:
         logger.error("email: %s failed (%s)", what, exc)
 
 
-async def _notify_new_order(store, order_id, total, items, body: OrderIn,
-                            delivery: float = 0.0, pay_method: str = "online"):
+async def _notify_new_order(store, order: dict) -> None:
     """Tell the seller there is an order, and give the buyer a receipt.
 
-    The buyer half used to be missing entirely: someone paid a shop they had
-    reached from a shared link and heard nothing until dispatch. A confirmation
-    with the order number and a link back to it is the difference between a
-    marketplace and a form that swallowed your money.
+    Timed to the money, not to the form. A COD order is real the moment it is
+    placed; an online one is real when it is paid. Sending the buyer "your
+    order is confirmed — Paid ₹500" the instant they reached the payment screen
+    meant anyone who closed that screen got a receipt for money they had never
+    spent, and a seller got an alert for an order that would never arrive.
+
+    Takes the stored order rather than the request body, so the email says what
+    the database says.
     """
-    order_doc = {
-        "order_id": order_id, "amount": total, "items": items,
-        "deliveryFee": delivery, "paymentMethod": pay_method,
-        "buyerName": body.buyerName, "buyerEmail": body.buyerEmail,
-    }
+    order_id = order["order_id"]
     buyer_link = f"{FRONTEND_URL}/orders/{order_id}"
 
-    if body.buyerEmail:
+    if order.get("buyerEmail"):
         asyncio.create_task(_send_quietly(
             email_service.send_order_confirmation_email(
-                body.buyerEmail, body.buyerName, order_doc,
+                order["buyerEmail"], order.get("buyerName"), order,
                 store.get("name") or "the shop", buyer_link,
                 dispatch_days=(store.get("dispatch_days")
                                if store.get("dispatch_days") is not None else 2)),
@@ -1853,7 +1975,7 @@ async def _notify_new_order(store, order_id, total, items, body: OrderIn,
         return
     asyncio.create_task(_send_quietly(
         email_service.send_new_order_email(
-            seller["email"], seller.get("name"), order_doc, buyer_link),
+            seller["email"], seller.get("name"), order, buyer_link),
         f"new-order alert to seller for {order_id}"))
 
 
@@ -1949,8 +2071,8 @@ async def checkout(slug: str, body: OrderIn, request: Request):
         await _record_order(order_id, store, body, items, subtotal, created_at, None, None, "cod",
                             delivery=delivery, amount=total)
         await _reserve_stock(demand, prod_cache)
-        await _notify_new_order(store, order_id, total, items, body,
-                                delivery=delivery, pay_method=pay_method)
+        placed = await db.fetch_one("SELECT * FROM orders WHERE order_id = $1", order_id)
+        await _notify_new_order(store, public_order(placed))
         return {"orderId": order_id, "amount": total, "subtotal": subtotal,
                 "deliveryFee": delivery, "paymentMethod": "cod",
                 "razorpayOrderId": None, "razorpayKeyId": None}
@@ -2003,8 +2125,7 @@ async def checkout(slug: str, body: OrderIn, request: Request):
     await _record_order(order_id, store, body, items, subtotal, created_at, rp_order_id, rp_key_id,
                         "online", delivery=delivery, amount=total)
     await _reserve_stock(demand, prod_cache)
-    await _notify_new_order(store, order_id, total, items, body,
-                            delivery=delivery, pay_method=pay_method)
+    # Nobody is emailed yet: this buyer has only reached the payment screen.
 
     return {
         "orderId": order_id,
@@ -2075,7 +2196,7 @@ async def verify_order_payment(order_id: str, body: PayVerifyIn):
     o = await db.fetch_one("SELECT * FROM orders WHERE order_id = $1", order_id)
     if not o:
         raise HTTPException(status_code=404, detail="Order not found")
-    if o["status"] != "placed":
+    if o["status"] not in ("placed", "abandoned"):
         return public_order(o, for_buyer=True)
     if o.get("razorpay_order_id") and o["razorpay_order_id"] != body.razorpay_order_id:
         raise HTTPException(status_code=400, detail="This payment does not match the order")
@@ -2088,17 +2209,7 @@ async def verify_order_payment(order_id: str, body: PayVerifyIn):
     if not hmac.compare_digest(expected, body.razorpay_signature):
         raise HTTPException(status_code=400, detail="Payment signature verification failed")
 
-    await db.execute(
-        "UPDATE orders SET status = 'paid', paid_at = $1, razorpay_payment_id = $2 WHERE order_id = $3 AND status = 'placed'",
-        iso(now()), body.razorpay_payment_id, order_id
-    )
-    seller = await db.fetch_one("SELECT * FROM users WHERE user_id = $1", o["seller_id"])
-    if seller:
-        asyncio.create_task(_send_quietly(
-            email_service.send_payment_email(
-                seller["email"], seller.get("name"), order_id, float(o.get("amount", 0)),
-                f"{FRONTEND_URL}/orders/{order_id}"),
-            f"payment alert to seller for {order_id}"))
+    await _mark_order_paid(o, body.razorpay_payment_id)
     o = await db.fetch_one("SELECT * FROM orders WHERE order_id = $1", order_id)
     return public_order(o, for_buyer=True)
 
@@ -2156,10 +2267,12 @@ async def razorpay_webhook(request: Request):
     rp_payment_id = payment.get("id")
 
     if rp_order_id and event in ("payment.captured", "order.paid"):
-        await db.execute(
-            "UPDATE orders SET status = 'paid', paid_at = $1, razorpay_payment_id = COALESCE($2, razorpay_payment_id) WHERE razorpay_order_id = $3 AND status = 'placed'",
-            iso(now()), rp_payment_id, rp_order_id
-        )
+        row = await db.fetch_one(
+            "SELECT * FROM orders WHERE razorpay_order_id = $1", rp_order_id)
+        if row:
+            await _mark_order_paid(row, rp_payment_id)
+        else:
+            logger.warning("webhook %s for unknown razorpay order %s", event, rp_order_id)
     return {"status": "ok"}
 
 
@@ -2603,8 +2716,13 @@ async def on_startup():
         await backfill_product_slugs()
     except Exception as e:
         logger.error(f"product slug backfill failed: {e}")
+    # Unpaid checkouts hold stock. Nothing gave it back until this ran.
+    app.state.sweeper = asyncio.create_task(_sweep_forever())
 
 
 @app.on_event("shutdown")
 async def on_shutdown():
+    sweeper = getattr(app.state, "sweeper", None)
+    if sweeper:
+        sweeper.cancel()
     await db.close_db()
