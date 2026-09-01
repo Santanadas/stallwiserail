@@ -254,6 +254,8 @@ def _init_sqlite_schema(conn: sqlite3.Connection):
     CREATE INDEX IF NOT EXISTS idx_orders_seller ON orders(seller_id);
     CREATE INDEX IF NOT EXISTS idx_orders_store ON orders(store_slug);
     CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+    -- The payment webhook looks an order up by this on every payment.
+    CREATE INDEX IF NOT EXISTS idx_orders_rp_order ON orders(razorpay_order_id);
 
     CREATE TABLE IF NOT EXISTS seller_routes (
         seller_id TEXT PRIMARY KEY,
@@ -438,6 +440,8 @@ CREATE TABLE IF NOT EXISTS orders (
 CREATE INDEX IF NOT EXISTS idx_orders_seller ON orders(seller_id);
 CREATE INDEX IF NOT EXISTS idx_orders_store ON orders(store_slug);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+-- The payment webhook looks an order up by this on every payment.
+CREATE INDEX IF NOT EXISTS idx_orders_rp_order ON orders(razorpay_order_id);
 
 CREATE TABLE IF NOT EXISTS seller_routes (
     seller_id TEXT PRIMARY KEY,

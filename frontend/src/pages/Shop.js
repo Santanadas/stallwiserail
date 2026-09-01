@@ -330,6 +330,8 @@ export default function Shop() {
         setQty={setQty}
         removeItem={removeItem}
         cartTotal={cartTotal}
+        deliveryFee={shop?.store?.deliveryFee || 0}
+        freeDeliveryAbove={shop?.store?.freeDeliveryAbove ?? null}
         buyer={buyer}
         setBuyer={setBuyer}
         checkout={() => checkout(buyer)}

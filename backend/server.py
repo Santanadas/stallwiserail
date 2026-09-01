@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import asyncio
 from pathlib import Path
+from urllib.parse import quote
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
 
@@ -821,6 +822,15 @@ async def public_shop(slug: str):
     return {
         "store": {
             "name": store["name"], "slug": store["slug"], "bio": store.get("bio", ""),
+            # The buyer has to be able to work out what they will actually pay.
+            # Without these the cart said ₹400 and the payment window asked for
+            # ₹460, which is the moment a first-time buyer decides the site is
+            # not straight with them.
+            "deliveryFee": float(store.get("delivery_fee") or 0),
+            "freeDeliveryAbove": (float(store["free_delivery_above"])
+                                  if store.get("free_delivery_above") is not None else None),
+            "dispatchDays": (store.get("dispatch_days")
+                             if store.get("dispatch_days") is not None else 2),
         },
         "seller": {
             "name": seller.get("name") if seller else None,
@@ -852,7 +862,16 @@ async def public_product_detail(slug: str, product_slug: str):
     )
     sub_status = await effective_sub_status(seller) if seller else "inactive"
     return {
-        "store": {"name": store["name"], "slug": store["slug"], "bio": store.get("bio", "")},
+        "store": {
+            "name": store["name"], "slug": store["slug"], "bio": store.get("bio", ""),
+            # Same reason as the shop page: the cart on this page has to be able
+            # to quote the real total.
+            "deliveryFee": float(store.get("delivery_fee") or 0),
+            "freeDeliveryAbove": (float(store["free_delivery_above"])
+                                  if store.get("free_delivery_above") is not None else None),
+            "dispatchDays": (store.get("dispatch_days")
+                             if store.get("dispatch_days") is not None else 2),
+        },
         "seller": {
             "name": seller.get("name") if seller else None,
             "avatar": seller.get("avatar") if seller else None,
@@ -1925,6 +1944,24 @@ async def _mark_order_paid(order_row: dict, payment_id: Optional[str]) -> bool:
     return True
 
 
+def _buyer_order_link(order_id: str, buyer_email: Optional[str]) -> str:
+    """The buyer's own link to their order.
+
+    /order/<id> reads the email straight out of the query string and has no
+    form to type it into, so a link without it lands the buyer on an error.
+    Every buyer-facing link therefore has to carry it — the dispatch email's
+    "View Order Status" button was broken for exactly this reason.
+
+    The email is the buyer's own, in their own inbox, and the order id alone is
+    deliberately not enough to open the page: the response carries their
+    address, phone and delivery code.
+    """
+    base = f"{FRONTEND_URL}/order/{order_id}"
+    if not buyer_email:
+        return base
+    return f"{base}?email={quote(buyer_email)}"
+
+
 async def _send_quietly(coro, what: str) -> None:
     """Run an email send without letting it break anything else.
 
@@ -1953,7 +1990,12 @@ async def _notify_new_order(store, order: dict) -> None:
     the database says.
     """
     order_id = order["order_id"]
-    buyer_link = f"{FRONTEND_URL}/orders/{order_id}"
+    # Two different pages. /order/<id> is the public buyer view; /orders/<id> is
+    # inside the seller's console and behind a login. Sending the buyer the
+    # seller's link puts a login wall between someone who just paid and proof
+    # that their money arrived.
+    buyer_link = _buyer_order_link(order_id, order.get("buyerEmail"))
+    seller_link = f"{FRONTEND_URL}/orders/{order_id}"
 
     if order.get("buyerEmail"):
         asyncio.create_task(_send_quietly(
@@ -1975,7 +2017,7 @@ async def _notify_new_order(store, order: dict) -> None:
         return
     asyncio.create_task(_send_quietly(
         email_service.send_new_order_email(
-            seller["email"], seller.get("name"), order, buyer_link),
+            seller["email"], seller.get("name"), order, seller_link),
         f"new-order alert to seller for {order_id}"))
 
 
@@ -2302,7 +2344,7 @@ async def ship_order(order_id: str, user=Depends(get_current_user)):
     )
     asyncio.create_task(_send_quietly(
         email_service.send_otp_email(o["buyer_email"], o["buyer_name"], otp,
-                                     f"{FRONTEND_URL}/order/{order_id}"),
+                                     _buyer_order_link(order_id, o.get("buyer_email"))),
         f"delivery code to buyer for {order_id}"))
     return {"status": "shipped"}
 

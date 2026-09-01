@@ -295,6 +295,8 @@ export default function ProductPage() {
         setQty={setQty}
         removeItem={removeItem}
         cartTotal={cartTotal}
+        deliveryFee={store?.deliveryFee || 0}
+        freeDeliveryAbove={store?.freeDeliveryAbove ?? null}
         buyer={buyer}
         setBuyer={setBuyer}
         checkout={() => checkout(buyer)}

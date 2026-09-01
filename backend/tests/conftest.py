@@ -86,7 +86,7 @@ TEST_PG_URL = (os.environ.get("STALLWISE_TEST_PG") or "").strip()
 
 _PG_TABLES = ("users", "pending_otps", "login_attempts", "password_reset_tokens",
               "user_sessions", "stores", "products", "orders", "seller_routes",
-              "seller_gateways", "platform_plans")
+              "seller_gateways", "platform_plans", "media")
 
 
 def _reset_pg_schema():

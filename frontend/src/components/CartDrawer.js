@@ -18,6 +18,8 @@ export default function CartDrawer({
   setQty,
   removeItem,
   cartTotal,
+  deliveryFee = 0,
+  freeDeliveryAbove = null,
   buyer,
   setBuyer,
   checkout,
@@ -45,7 +47,23 @@ export default function CartDrawer({
   const noSharedMethod = cart.length > 0 && allowedPayments.length === 0;
   const canPay =
     !placing && buyer.buyerName.trim() && buyer.buyerEmail.trim() && phoneOk && cart.length > 0 && !noSharedMethod;
-  const payCta = payMethod === "cod" ? `Place order · ₹${cartTotal}` : `Pay ₹${cartTotal}`;
+  // Mirrors delivery_for() on the server: free once the threshold is met, and
+  // the threshold is inclusive because "free delivery above ₹1,500" reads to a
+  // buyer as "spend ₹1,500 and it is free". If these two ever disagree the
+  // buyer is quoted one number and charged another, so they have to match.
+  const subtotal = Number(cartTotal) || 0;
+  const delivery =
+    deliveryFee > 0 && !(freeDeliveryAbove != null && subtotal >= freeDeliveryAbove)
+      ? deliveryFee
+      : 0;
+  const grandTotal = subtotal + delivery;
+  const awayFromFree =
+    deliveryFee > 0 && freeDeliveryAbove != null && subtotal < freeDeliveryAbove
+      ? freeDeliveryAbove - subtotal
+      : 0;
+
+  const payCta =
+    payMethod === "cod" ? `Place order · ₹${grandTotal}` : `Pay ₹${grandTotal}`;
 
   return createPortal(
     <div className="mk fixed inset-0 z-[100] flex justify-end" data-testid="cart-drawer">
@@ -142,10 +160,25 @@ export default function CartDrawer({
         {/* Checkout */}
         {cart.length > 0 && (
           <div className="border-t-2 border-[#0A0A0A] bg-white px-4 py-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between text-sm">
+              <span className="font-semibold text-[#525252]">Subtotal</span>
+              <span className="font-bold" data-testid="cart-subtotal">₹{subtotal}</span>
+            </div>
+            <div className="mt-1 flex items-center justify-between text-sm">
+              <span className="font-semibold text-[#525252]">Delivery</span>
+              <span className="font-bold" data-testid="cart-delivery">
+                {delivery > 0 ? `₹${delivery}` : "Free"}
+              </span>
+            </div>
+            {awayFromFree > 0 && (
+              <p className="mt-1.5 text-xs font-semibold text-[#C43D00]">
+                Add ₹{awayFromFree} more for free delivery
+              </p>
+            )}
+            <div className="mt-2.5 flex items-center justify-between border-t border-neutral-200 pt-2.5">
               <span className={labelText}>Total</span>
               <span className="mk-head text-2xl font-black tracking-tighter" data-testid="cart-total">
-                ₹{cartTotal}
+                ₹{grandTotal}
               </span>
             </div>
 

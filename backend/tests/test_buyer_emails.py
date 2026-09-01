@@ -61,7 +61,7 @@ def test_the_buyer_gets_a_receipt_when_they_order(seller_with_store, app_client,
     assert r.json()["orderId"] in body      # something to quote back to the seller
     assert "Brass Lamp" in body
     assert "Test Shop" in receipts[0]["subject"]
-    assert "/orders/" in body                 # a way back to the order
+    assert "/order/" in body and "/orders/" not in body   # the public page, not the console
 
 
 def test_the_receipt_says_cash_on_delivery_when_that_is_what_it_is(
@@ -153,3 +153,84 @@ def test_the_dispatch_code_still_goes_to_the_buyer(seller_with_store, app_client
 
     subjects = [m["subject"] for m in to(outbox, "buyer@example.com")]
     assert any("delivery code" in s for s in subjects)
+
+
+# --- The links in those emails have to work ------------------------------
+import re
+from urllib.parse import urlparse, parse_qs
+
+
+def only_link(html, needle):
+    return re.findall(r'href=[\'"]([^\'"]+)[\'"]', html)
+
+
+def buyer_order_url(html):
+    """The 'Track your order' link, as the buyer's mail client sees it."""
+    links = [u for u in only_link(html, "/order/") if "/order/" in u]
+    assert links, f"no buyer order link in the email: {links}"
+    return links[0]
+
+
+def test_the_buyers_link_opens_their_order(seller_with_store, app_client, outbox):
+    """It used to point at /orders/<id>, which is the seller's console and
+    behind a login — a wall between someone who just paid and their receipt."""
+    product = make_product(seller_with_store, price=500, paymentMethods=["cod"])
+    place_order(app_client, seller_with_store.store_slug,
+                [{"productId": product["product_id"], "quantity": 1}],
+                payment_method="cod", buyer={"email": "buyer@example.com"})
+    drain(app_client)
+
+    url = buyer_order_url(to(outbox, "buyer@example.com")[0]["html"])
+    parsed = urlparse(url)
+    assert parsed.path.startswith("/order/"), "the buyer was sent to the seller's page"
+
+    # Follow it exactly as the buyer's browser would.
+    r = app_client.get(f"/api{parsed.path}", params={
+        "email": parse_qs(parsed.query).get("email", [""])[0]})
+    assert r.status_code == 200, "the link in the receipt does not open the order"
+    assert r.json()["buyerEmail"] == "buyer@example.com"
+
+
+def test_a_link_without_the_email_is_useless_so_we_always_send_it(
+        seller_with_store, app_client, outbox):
+    """The page has no form to type an email into, so the link must carry it."""
+    product = make_product(seller_with_store, price=500, paymentMethods=["cod"])
+    place_order(app_client, seller_with_store.store_slug,
+                [{"productId": product["product_id"], "quantity": 1}],
+                payment_method="cod", buyer={"email": "buyer@example.com"})
+    drain(app_client)
+
+    url = buyer_order_url(to(outbox, "buyer@example.com")[0]["html"])
+    assert "email=" in url
+    # And without it the endpoint really does refuse, which is why it matters.
+    assert app_client.get(f"/api/order/{urlparse(url).path.split('/')[-1]}").status_code == 404
+
+
+def test_the_dispatch_email_link_works_too(seller_with_store, app_client, outbox):
+    product = make_product(seller_with_store, price=500, paymentMethods=["cod"])
+    order = place_order(app_client, seller_with_store.store_slug,
+                        [{"productId": product["product_id"], "quantity": 1}],
+                        payment_method="cod", buyer={"email": "buyer@example.com"}).json()
+    seller_with_store.post(f"/api/orders/{order['orderId']}/ship")
+    drain(app_client)
+
+    dispatch = [m for m in to(outbox, "buyer@example.com")
+                if "delivery code" in m["subject"]][0]
+    parsed = urlparse(buyer_order_url(dispatch["html"]))
+    r = app_client.get(f"/api{parsed.path}",
+                       params={"email": parse_qs(parsed.query).get("email", [""])[0]})
+    assert r.status_code == 200
+    assert r.json()["otp"], "the buyer needs the delivery code on that page"
+
+
+def test_the_sellers_link_goes_to_the_console(seller_with_store, app_client, outbox):
+    product = make_product(seller_with_store, price=500, paymentMethods=["cod"])
+    place_order(app_client, seller_with_store.store_slug,
+                [{"productId": product["product_id"], "quantity": 1}],
+                payment_method="cod", buyer={"email": "buyer@example.com"})
+    drain(app_client)
+
+    html = to(outbox, seller_with_store.email)[0]["html"]
+    assert any("/orders/" in u for u in only_link(html, "/orders/"))
+    # And the seller's own link must not leak the buyer's email into a URL.
+    assert "email=" not in html
