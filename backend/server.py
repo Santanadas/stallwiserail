@@ -31,6 +31,7 @@ import storage
 import route_service
 import seo
 import ai_service
+import ai_assistant
 
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 PREMIUM_TIER = "Stall Wise Pro"
@@ -194,6 +195,33 @@ class AIDescribeIn(BaseModel):
     stock: Optional[int] = Field(default=None, ge=0, le=100000)
     images: List[str] = Field(default_factory=list, max_length=8)
     optionGroups: List[OptionGroupIn] = Field(default_factory=list, max_length=5)
+
+
+class AssistantTurnIn(BaseModel):
+    role: str = Field(pattern="^(user|assistant)$")
+    content: str = Field(default="", max_length=2000)
+
+
+class AssistantIn(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+    history: List[AssistantTurnIn] = Field(default_factory=list, max_length=12)
+
+
+class AssistantChangeIn(BaseModel):
+    """One proposal coming back for the seller to apply.
+
+    Deliberately loose: nothing here is trusted. The apply route looks the
+    product up again by owner, drops any key it does not recognise and re-runs
+    the same bounds the assistant ran. A client that hand-writes this body gets
+    no further than the assistant would have.
+    """
+    kind: str = Field(pattern="^(product|settings)$")
+    productId: Optional[str] = Field(default=None, max_length=64)
+    changes: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AssistantApplyIn(BaseModel):
+    proposals: List[AssistantChangeIn] = Field(min_length=1, max_length=10)
 
 
 class BulkOrderIn(BaseModel):
@@ -1436,6 +1464,271 @@ async def ai_product_description(body: AIDescribeIn, request: Request,
 
 
 
+# ======================= AI shop assistant =======================
+# The model can read this seller's shop and propose changes to it. It cannot
+# write. Every tool below is closed over `user`, so there is no seller id in the
+# model's reach — asking for "seller 42's products" is not a thing it can
+# express. Applying a proposal is a separate, explicit request from the seller,
+# and that route re-checks ownership and bounds rather than trusting what comes
+# back.
+
+# Wire name -> the tool's own argument name. An allowlist: a key that is not in
+# here is dropped on apply, so a hand-written client cannot smuggle in a column.
+_ASSISTANT_PRODUCT_KEYS = {
+    "price": "price",
+    "stock": "stock",
+    "active": "active",
+    "paymentMethods": "payment_methods",
+}
+_ASSISTANT_SETTINGS_KEYS = {
+    "deliveryFee": "delivery_fee",
+    "freeDeliveryAbove": "free_delivery_above",
+    "dispatchDays": "dispatch_days",
+}
+
+
+def _assistant_tools(user: dict, request: Request):
+    """Build the tool set bound to one authenticated seller."""
+    seller_id = user["user_id"]
+
+    async def _owned_product(product_id: str) -> dict:
+        prod = await db.fetch_one(
+            "SELECT * FROM products WHERE product_id = $1 AND seller_id = $2",
+            str(product_id or ""), seller_id)
+        if not prod:
+            raise ai_assistant.ProposalError(
+                "There's no product with that id in this shop. Use list_products to get the ids.")
+        return public_product(prod)
+
+    async def list_products(search: str = "", only_low_stock: bool = False,
+                            only_drafts: bool = False) -> dict:
+        rows = await db.fetch_all(
+            "SELECT * FROM products WHERE seller_id = $1 ORDER BY created_at DESC LIMIT 500",
+            seller_id)
+        items = [public_product(r) for r in rows]
+        needle = (search or "").strip().lower()
+        if needle:
+            items = [p for p in items if needle in (p["title"] or "").lower()]
+        if only_low_stock:
+            items = [p for p in items
+                     if p["stock"] is not None and p["stock"] <= LOW_STOCK_THRESHOLD]
+        if only_drafts:
+            items = [p for p in items if not p["active"]]
+        return {
+            "count": len(items),
+            "products": [
+                {"product_id": p["product_id"], "title": p["title"], "price": p["price"],
+                 "stock": p["stock"], "active": p["active"],
+                 "paymentMethods": p["paymentMethods"], "hasImage": bool(p["images"])}
+                for p in items[:60]
+            ],
+        }
+
+    async def shop_overview() -> dict:
+        # Reuses the dashboard's arithmetic so the assistant can never quote a
+        # figure that disagrees with the screen the seller is looking at.
+        s = await dashboard_summary(request, user)
+        return {
+            "queue": s["queue"], "metrics": s["metrics"], "money": s["money"],
+            "topProducts": s["topProducts"], "paymentMix": s["paymentMix"],
+            "topCities": s["topCities"], "counts": s["counts"], "health": s["health"],
+        }
+
+    async def list_orders(status: str = "", limit: int = 10) -> dict:
+        rows = await db.fetch_all(
+            "SELECT * FROM orders WHERE seller_id = $1 ORDER BY created_at DESC LIMIT 200",
+            seller_id)
+        orders = [public_order(o) for o in rows]
+        if status:
+            orders = [o for o in orders if o["status"] == status]
+        try:
+            cap = max(1, min(20, int(limit)))
+        except (TypeError, ValueError):
+            cap = 10
+        return {
+            "count": len(orders),
+            "orders": [
+                {
+                    "order_id": o["order_id"],
+                    "status": o["status"],
+                    "amount": o["amount"],
+                    "paymentMethod": o["paymentMethod"],
+                    "placedAt": o["created_at"],
+                    # Everything below was typed by a member of the public.
+                    "buyerName": ai_assistant.fence_buyer_text(o["buyerName"]),
+                    "city": ai_assistant.fence_buyer_text((o.get("address") or {}).get("city")),
+                    "disputeReason": (ai_assistant.fence_buyer_text(o["disputeReason"])
+                                      if o["disputeReason"] else None),
+                    "items": [{"title": it.get("title"), "quantity": it.get("quantity")}
+                              for it in (o.get("items") or [])][:10],
+                }
+                for o in orders[:cap]
+            ],
+        }
+
+    async def get_settings() -> dict:
+        store = await get_my_store(user)
+        if not store:
+            return {"error": "This seller hasn't created their shop yet."}
+        return {
+            "name": store["name"], "slug": store["slug"], "bio": store["bio"],
+            "deliveryFee": store["deliveryFee"],
+            "freeDeliveryAbove": store["freeDeliveryAbove"],
+            "dispatchDays": store["dispatchDays"], "gstin": store["gstin"],
+            "notifyNewOrder": store["notifyNewOrder"],
+            "notifyDailySummary": store["notifyDailySummary"],
+            "notifyWeeklyDigest": store["notifyWeeklyDigest"],
+        }
+
+    async def propose_product_update(product_id: str, reason: str, **patch) -> dict:
+        prod = await _owned_product(product_id)
+        changes = ai_assistant.validate_product_proposal(patch)
+        before = {k: prod.get(k) for k in changes}
+        if before == changes:
+            raise ai_assistant.ProposalError(
+                f"'{prod['title']}' is already set that way — nothing to change.")
+        return {
+            "queued": True,
+            "note": "Shown to the seller. It only takes effect if they press Apply.",
+            "proposal": {
+                "kind": "product",
+                "productId": prod["product_id"],
+                "label": prod["title"],
+                "reason": security.sanitize_text(str(reason or ""), 200),
+                "before": before,
+                "changes": changes,
+            },
+        }
+
+    async def propose_settings_update(reason: str, **patch) -> dict:
+        store = await get_my_store(user)
+        if not store:
+            raise ai_assistant.ProposalError("This seller hasn't created their shop yet.")
+        changes = ai_assistant.validate_settings_proposal(patch)
+        before = {k: store.get(k) for k in changes}
+        if before == changes:
+            raise ai_assistant.ProposalError("The shop is already set that way — nothing to change.")
+        return {
+            "queued": True,
+            "note": "Shown to the seller. It only takes effect if they press Apply.",
+            "proposal": {
+                "kind": "settings",
+                "productId": None,
+                "label": "Shop settings",
+                "reason": security.sanitize_text(str(reason or ""), 200),
+                "before": before,
+                "changes": changes,
+            },
+        }
+
+    return {
+        "list_products": list_products,
+        "shop_overview": shop_overview,
+        "list_orders": list_orders,
+        "get_settings": get_settings,
+        "propose_product_update": propose_product_update,
+        "propose_settings_update": propose_settings_update,
+    }
+
+
+@api.post("/ai/assistant")
+async def ai_assistant_chat(body: AssistantIn, request: Request,
+                            user=Depends(get_current_user)):
+    if not ai_service.enabled():
+        raise HTTPException(status_code=503,
+                            detail="The shop assistant isn't switched on for this site yet.")
+    # A turn can fan out into several model calls, so it is the priciest thing a
+    # seller can trigger. Per seller, not per IP.
+    if not security.check_rate_limit(f"ai_chat:{user['user_id']}", max_requests=60, window_seconds=3600):
+        raise HTTPException(status_code=429,
+                            detail="You've used this hour's assistant messages. Try again shortly.")
+    try:
+        return await ai_assistant.run(
+            message=body.message,
+            history=[t.model_dump() for t in body.history],
+            tools=_assistant_tools(user, request),
+        )
+    except ai_assistant.AIUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("assistant turn failed")
+        raise HTTPException(status_code=500, detail="The assistant hit a problem. Try again.")
+
+
+@api.post("/ai/assistant/apply")
+async def ai_assistant_apply(body: AssistantApplyIn, user=Depends(get_current_user)):
+    """Apply proposals the seller confirmed.
+
+    This does not trust the body. The AI is not consulted, the product is looked
+    up again under this seller's id, unknown keys are dropped and the same
+    bounds run a second time. A proposal that has gone stale — the product was
+    deleted meanwhile — fails on its own without stopping the rest.
+    """
+    if not security.check_rate_limit(f"ai_apply:{user['user_id']}", max_requests=120, window_seconds=3600):
+        raise HTTPException(status_code=429, detail="Too many changes at once. Try again shortly.")
+
+    applied, failed = [], []
+    for item in body.proposals:
+        try:
+            if item.kind == "product":
+                prod = await db.fetch_one(
+                    "SELECT * FROM products WHERE product_id = $1 AND seller_id = $2",
+                    str(item.productId or ""), user["user_id"])
+                if not prod:
+                    raise ai_assistant.ProposalError("That product no longer exists.")
+                current = public_product(prod)
+                patch = {arg: item.changes[wire]
+                         for wire, arg in _ASSISTANT_PRODUCT_KEYS.items() if wire in item.changes}
+                changes = ai_assistant.validate_product_proposal(patch)
+
+                columns = {"price": "price", "stock": "stock", "active": "active",
+                           "paymentMethods": "payment_methods"}
+                sets, values = [], []
+                for key, value in changes.items():
+                    if key == "paymentMethods":
+                        value = [m for m in PAYMENT_METHODS if m in set(value)] or ["online"]
+                    sets.append(f"{columns[key]} = ${len(values) + 1}")
+                    values.append(value)
+                values.extend([current["product_id"], user["user_id"]])
+                await db.execute(
+                    f"UPDATE products SET {', '.join(sets)} "
+                    f"WHERE product_id = ${len(values) - 1} AND seller_id = ${len(values)}",
+                    *values)
+                applied.append({"kind": "product", "productId": current["product_id"],
+                                "label": current["title"], "changes": changes})
+            else:
+                store = await get_my_store(user)
+                if not store:
+                    raise ai_assistant.ProposalError("No shop to change.")
+                patch = {arg: item.changes[wire]
+                         for wire, arg in _ASSISTANT_SETTINGS_KEYS.items() if wire in item.changes}
+                changes = ai_assistant.validate_settings_proposal(patch)
+
+                columns = {"deliveryFee": "delivery_fee",
+                           "freeDeliveryAbove": "free_delivery_above",
+                           "dispatchDays": "dispatch_days"}
+                sets, values = [], []
+                for key, value in changes.items():
+                    sets.append(f"{columns[key]} = ${len(values) + 1}")
+                    values.append(value)
+                values.append(store["store_id"])
+                await db.execute(
+                    f"UPDATE stores SET {', '.join(sets)} WHERE store_id = ${len(values)}",
+                    *values)
+                applied.append({"kind": "settings", "productId": None,
+                                "label": "Shop settings", "changes": changes})
+        except ai_assistant.ProposalError as exc:
+            failed.append({"kind": item.kind, "productId": item.productId, "reason": str(exc)})
+        except (TypeError, ValueError) as exc:
+            logger.warning("assistant apply rejected a proposal: %s", exc)
+            failed.append({"kind": item.kind, "productId": item.productId,
+                           "reason": "That change didn't look right, so nothing was saved."})
+
+    return {"applied": applied, "failed": failed}
+
+
 # ======================= Orders =======================
 async def finalize_if_expired(order: dict) -> dict:
     """Auto-complete a delivered order once its acceptance window has elapsed
@@ -2015,6 +2308,11 @@ async def health_check():
     if missing:
         out["status"] = "degraded"
         out["missingConfig"] = missing
+    # The AI features are optional, so a missing key is not "degraded" — but it
+    # is the only way to tell from Railway whether the key actually landed.
+    out["ai"] = {"enabled": ai_service.enabled(),
+                 "model": ai_service.MODEL,
+                 "assistantModel": ai_assistant.MODEL}
     # DEV_OTP_ECHO returns login OTPs in API responses. On a public deployment
     # that is a complete authentication bypass, so say so loudly.
     if (os.environ.get("DEV_OTP_ECHO") or "").lower() == "true":

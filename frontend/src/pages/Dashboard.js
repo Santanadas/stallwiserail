@@ -47,6 +47,7 @@ import ProductEditor from "@/components/ProductEditor";
 import StoreQrModal from "@/components/StoreQrModal";
 import { useDocumentMeta } from "@/lib/useDocumentMeta";
 import Shell from "@/components/dash/Shell";
+import Assistant from "@/components/dash/Assistant";
 import HomeSection from "@/components/dash/Home";
 import InsightsSection from "@/components/dash/Insights";
 import MoneySection from "@/components/dash/Money";
@@ -1664,6 +1665,13 @@ export default function Dashboard() {
           <ShopSettings store={store} onSaved={loadStore} />
           <AccountSection user={user} onLogout={onLogout} />
         </div>
+      )}
+
+      {/* Applying a proposal writes to the same tables the console reads, so a
+          successful apply pulls the whole console fresh rather than leaving a
+          panel showing the old price. */}
+      {store && (
+        <Assistant onApplied={() => { refreshAll(); loadStore(); }} />
       )}
     </Shell>
   );

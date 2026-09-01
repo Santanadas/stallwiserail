@@ -231,21 +231,39 @@ def make_seller(app_client):
         token = v.json()["token"]
 
         class Seller:
+            """One seller, authenticating by bearer token only.
+
+            verify-otp sets session cookies on the shared TestClient, and
+            get_current_user reads cookies before the Authorization header. So
+            without clearing them, a test with two sellers silently sends every
+            request as whichever one verified last — which has made auth and
+            ownership tests pass for the wrong reason more than once. Each call
+            below drops the cookie jar first, so this helper behaves like a
+            separate browser.
+            """
+
             def __init__(self):
                 self.email = email
                 self.token = token
                 self.headers = {"Authorization": f"Bearer {token}"}
 
+            def _bare(self):
+                app_client.cookies.clear()
+
             def get(self, path, **kw):
+                self._bare()
                 return app_client.get(path, headers=self.headers, **kw)
 
             def post(self, path, **kw):
+                self._bare()
                 return app_client.post(path, headers=self.headers, **kw)
 
             def put(self, path, **kw):
+                self._bare()
                 return app_client.put(path, headers=self.headers, **kw)
 
             def delete(self, path, **kw):
+                self._bare()
                 return app_client.delete(path, headers=self.headers, **kw)
 
         return Seller()
