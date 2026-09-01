@@ -162,3 +162,50 @@ def test_rate_limiter_actually_closes_the_window():
     key = "unit-test-window"
     assert all(security.check_rate_limit(key, 3, 600) for _ in range(3))
     assert security.check_rate_limit(key, 3, 600) is False
+
+
+# --- 5. Gateway errors must not leak to the client --------------------------
+def test_rejected_razorpay_credentials_are_reported_as_a_platform_outage(seller_with_store, monkeypatch):
+    """Razorpay answers "Authentication failed" when the key pair is rejected.
+    That is a deployment misconfiguration — and because the same keys back every
+    buyer checkout, it means payments are down shopwide, not just billing."""
+    import razorpay
+    import server as srv
+
+    monkeypatch.setattr(srv, "_RP_KEY_ID", "rzp_live_x")
+    monkeypatch.setattr(srv, "_RP_KEY_SECRET", "wrong")
+
+    def boom(*a, **k):
+        raise razorpay.errors.BadRequestError("Authentication failed")
+
+    class _C:
+        order = type("O", (), {"create": staticmethod(boom)})()
+
+    monkeypatch.setattr(srv.route_service, "razorpay_client", lambda *a, **k: _C())
+
+    r = seller_with_store.post("/api/subscription/create", json={"interval": "monthly"})
+    assert r.status_code == 503
+    body = r.json()["detail"]
+    assert "temporarily unavailable" in body
+    # The gateway's own wording must not reach the browser.
+    assert "Authentication failed" not in body
+    assert "razorpay" not in body.lower()
+
+
+def test_other_gateway_errors_do_not_leak_their_message(seller_with_store, monkeypatch):
+    import server as srv
+
+    monkeypatch.setattr(srv, "_RP_KEY_ID", "rzp_live_x")
+    monkeypatch.setattr(srv, "_RP_KEY_SECRET", "s")
+
+    def boom(*a, **k):
+        raise RuntimeError("internal detail nobody outside should read")
+
+    class _C:
+        order = type("O", (), {"create": staticmethod(boom)})()
+
+    monkeypatch.setattr(srv.route_service, "razorpay_client", lambda *a, **k: _C())
+
+    r = seller_with_store.post("/api/subscription/create", json={"interval": "monthly"})
+    assert r.status_code == 502
+    assert "internal detail" not in r.json()["detail"]

@@ -1929,9 +1929,28 @@ async def create_subscription(body: SubCreateIn, user=Depends(get_current_user))
             "keyId": kid,
             "tier": PREMIUM_TIER,
         }
+    except razorpay.errors.BadRequestError as e:
+        # Razorpay says "Authentication failed" when the key/secret pair is
+        # rejected — rotated, mismatched (a live id with a test secret) or from
+        # an account that is not activated for live mode. It is a platform
+        # misconfiguration, not something the seller did, and the same keys back
+        # every buyer checkout: if this fires, online payments are down shopwide.
+        if "authentication" in str(e).lower():
+            logger.critical(
+                "RAZORPAY CREDENTIALS REJECTED — RAZORPAY_KEY_ID/RAZORPAY_KEY_SECRET are "
+                "not accepted by Razorpay. Every online payment is failing, not just "
+                "subscriptions. Check the pair in the deployment environment."
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Payments are temporarily unavailable. We have been notified.",
+            )
+        logger.error(f"Razorpay rejected the subscription order: {e}")
+        raise HTTPException(status_code=502, detail="Could not start the payment. Please try again.")
     except Exception as e:
         logger.error(f"Live Razorpay subscription order creation failed: {e}", exc_info=True)
-        raise HTTPException(status_code=502, detail=f"Razorpay error: {str(e)}")
+        # Never hand the raw gateway message to the client.
+        raise HTTPException(status_code=502, detail="Could not start the payment. Please try again.")
 
 
 @api.post("/subscription/verify-payment")
