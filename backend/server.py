@@ -952,23 +952,26 @@ async def delete_avatar(user=Depends(get_current_user)):
 
 @api.get("/files/{path:path}")
 async def serve_file(path: str, request: Request):
+    # Every stored name ends in a fresh uuid and its bytes never change, so the
+    # path alone identifies the version. That means the revalidation can be
+    # answered before touching the database at all, and the response is
+    # immutable for a year — a shop full of photos does not cost a read per
+    # image per visitor.
+    etag = f'W/"{hashlib.sha256(path.encode()).hexdigest()[:32]}"'
+    cache = "public, max-age=31536000, immutable"
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": cache})
+
     try:
         data, content_type = await storage.get(path)
     except Exception:
         raise HTTPException(status_code=404, detail="File not found")
 
-    # Every stored name ends in a fresh uuid, so a path's bytes never change.
-    # That makes the response immutable and cacheable for a year, which keeps
-    # a shop full of photos from becoming a read per image per visitor.
-    etag = f'W/"{hashlib.sha256(data).hexdigest()[:32]}"'
-    if request.headers.get("if-none-match") == etag:
-        return Response(status_code=304, headers={"ETag": etag,
-                                                  "Cache-Control": "public, max-age=31536000, immutable"})
     return Response(
         content=data,
         media_type=content_type,
         headers={
-            "Cache-Control": "public, max-age=31536000, immutable",
+            "Cache-Control": cache,
             "ETag": etag,
             "X-Content-Type-Options": "nosniff",
             "Content-Disposition": "inline",
@@ -2349,6 +2352,50 @@ async def ship_order(order_id: str, user=Depends(get_current_user)):
     return {"status": "shipped"}
 
 
+@api.post("/orders/{order_id}/resend-code")
+async def resend_delivery_code(order_id: str, request: Request, user=Depends(get_current_user)):
+    """Issue a fresh delivery code and clear the lock.
+
+    Without this the order was a dead end. The seller reads a six-digit code off
+    the buyer's phone at the door; five wrong entries locked it permanently,
+    with no unlock and no resend. The order stayed "shipped" for ever — never
+    delivered, never completed, and for cash on delivery never even marked paid
+    — and neither side was told what to do about it.
+
+    The code is regenerated rather than revealed, so this cannot be used to read
+    the existing one, and it is rate limited so it cannot be used to flood the
+    buyer or to grind attempts.
+    """
+    if not security.check_rate_limit(f"otp_resend:{user['user_id']}",
+                                     max_requests=10, window_seconds=600):
+        raise HTTPException(status_code=429,
+                            detail="Too many code requests. Please wait a few minutes.")
+
+    o = await db.fetch_one("SELECT * FROM orders WHERE order_id = $1 AND seller_id = $2",
+                           order_id, user["user_id"])
+    if not o:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if o["status"] != "shipped":
+        raise HTTPException(status_code=400,
+                            detail="Only a dispatched order has a delivery code")
+
+    otp = security.generate_otp()
+    await db.execute(
+        """
+        UPDATE orders
+        SET otp_code_hash = $1, otp_enc = $2, otp_generated_at = $3,
+            otp_attempts = 0, otp_locked = FALSE
+        WHERE order_id = $4 AND seller_id = $5
+        """,
+        security.hash_otp(otp), security.encrypt_secret(otp), iso(now()),
+        order_id, user["user_id"])
+    asyncio.create_task(_send_quietly(
+        email_service.send_otp_email(o["buyer_email"], o["buyer_name"], otp,
+                                     _buyer_order_link(order_id, o.get("buyer_email"))),
+        f"replacement delivery code to buyer for {order_id}"))
+    return {"ok": True}
+
+
 @api.post("/orders/{order_id}/confirm-delivery")
 async def confirm_delivery(order_id: str, body: OtpIn, request: Request, user=Depends(get_current_user)):
     client_ip = get_client_ip(request)
@@ -2361,14 +2408,18 @@ async def confirm_delivery(order_id: str, body: OtpIn, request: Request, user=De
     if o["status"] != "shipped":
         raise HTTPException(status_code=400, detail="Order not ready for delivery confirmation")
     if o.get("otp_locked"):
-        raise HTTPException(status_code=423, detail="OTP locked after too many failed attempts")
+        raise HTTPException(
+            status_code=423,
+            detail="This code is locked after too many wrong entries. Send the buyer a new one.")
 
     if not security.verify_otp(body.otp.strip(), o.get("otp_code_hash", "")):
         attempts = (o.get("otp_attempts") or 0) + 1
         locked = attempts >= OTP_MAX_ATTEMPTS
         await db.execute("UPDATE orders SET otp_attempts = $1, otp_locked = $2 WHERE order_id = $3", attempts, locked, order_id)
         if locked:
-            raise HTTPException(status_code=423, detail="Too many failed attempts. Code locked.")
+            raise HTTPException(
+                status_code=423,
+                detail="Too many wrong entries. Send the buyer a new code and try again.")
         raise HTTPException(status_code=400, detail=f"Invalid OTP code ({attempts}/{OTP_MAX_ATTEMPTS} attempts)")
 
     store = await db.fetch_one("SELECT acceptance_window_minutes FROM stores WHERE slug = $1", o["store_slug"])

@@ -1,3 +1,4 @@
+import asyncio
 import os
 import uuid
 import logging
@@ -97,7 +98,9 @@ async def put(path: str, data: bytes, content_type: str, owner_id: str = "") -> 
         # the seller cannot complete at all.
         logger.error("media: database write failed for %s (%s) — falling back to disk",
                      path, exc)
-        result = put_object(path, data, content_type)
+        # Off the event loop: this is a blocking file write, and everything else
+        # the server is serving shares that loop.
+        result = await asyncio.to_thread(put_object, path, data, content_type)
         result["durable"] = False
         return result
 
@@ -115,8 +118,9 @@ async def get(path: str):
     if row:
         raw = row["bytes"]
         return (bytes(raw) if not isinstance(raw, bytes) else raw), row["content_type"]
-    # Uploaded before the move, or written by the disk fallback above.
-    return get_object(path)
+    # Uploaded before the move, or written by the disk fallback above. Blocking
+    # read, so it goes to a thread.
+    return await asyncio.to_thread(get_object, path)
 
 
 async def delete(path: str) -> None:

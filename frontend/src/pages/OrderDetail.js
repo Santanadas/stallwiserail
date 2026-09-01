@@ -170,9 +170,25 @@ export default function OrderDetail() {
                 >
                   <PackageCheck className="h-4 w-4" /> Confirm delivery
                 </Btn>
+                {/* Reading six digits off someone's phone at the door goes
+                    wrong often enough that a lock has to be recoverable. */}
+                <Btn
+                  data-testid="resend-code-btn"
+                  onClick={() => act(async () => {
+                    await api.post(`/orders/${order.order_id}/resend-code`);
+                    setOtp("");
+                    setMsg("A new code has been emailed to the buyer.");
+                  })}
+                >
+                  Send a new code
+                </Btn>
               </div>
               {order.otpLocked && (
-                <div className="mt-3"><Note tone="error" data-testid="otp-locked">OTP locked (too many attempts)</Note></div>
+                <div className="mt-3">
+                  <Note tone="error" data-testid="otp-locked">
+                    This code is locked after too many wrong entries. Send the buyer a new one to carry on.
+                  </Note>
+                </div>
               )}
               <p className="mt-3 text-xs font-bold uppercase tracking-widest text-neutral-500">
                 Attempts: {order.otpAttempts}/5

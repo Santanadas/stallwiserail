@@ -113,3 +113,34 @@ def test_an_avatar_upload_is_recorded_on_the_user(seller_with_store):
     r = upload(seller_with_store, kind="avatar")
     assert r.status_code == 200
     assert seller_with_store.get("/api/auth/me").json()["avatar"] == r.json()["path"]
+
+
+def test_revalidation_does_not_touch_the_database(seller_with_store, app_client, monkeypatch):
+    """A path's bytes never change, so an If-None-Match can be answered from the
+    path alone. Reading megabytes back just to say "unchanged" would make a busy
+    shop pay for every cached image too."""
+    url = upload(seller_with_store).json()["url"]
+    etag = app_client.get(url).headers["etag"]
+
+    reads = []
+    original = storage.get
+
+    async def counting_get(path):
+        reads.append(path)
+        return await original(path)
+
+    monkeypatch.setattr(storage, "get", counting_get)
+    r = app_client.get(url, headers={"If-None-Match": etag})
+    assert r.status_code == 304
+    assert reads == [], "a cached image still cost a database read"
+
+
+def test_the_etag_is_stable_across_requests(seller_with_store, app_client):
+    url = upload(seller_with_store).json()["url"]
+    assert app_client.get(url).headers["etag"] == app_client.get(url).headers["etag"]
+
+
+def test_different_images_get_different_etags(seller_with_store, app_client):
+    a = upload(seller_with_store).json()["url"]
+    b = upload(seller_with_store).json()["url"]
+    assert app_client.get(a).headers["etag"] != app_client.get(b).headers["etag"]
