@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Sparkles, X, ArrowUp, Check, Loader2, AlertTriangle } from "lucide-react";
 import api, { formatApiError } from "@/lib/api";
+import { askAssistant } from "@/lib/aiAssistant";
 import { aiEnabled } from "@/lib/aiDescription";
 import { inr } from "./Pieces";
 
@@ -114,9 +115,11 @@ export default function Assistant({ onApplied }) {
   const [turns, setTurns] = useState([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const endRef = useRef(null);
   const inputRef = useRef(null);
+  const abortRef = useRef(null);
 
   useEffect(() => {
     let alive = true;
@@ -141,6 +144,7 @@ export default function Assistant({ onApplied }) {
     setDraft("");
     setError("");
     setBusy(true);
+    setStatus("Thinking");
 
     // Snapshot before appending, so the model sees the conversation as it was.
     const history = turns
@@ -149,17 +153,26 @@ export default function Assistant({ onApplied }) {
       .map((t) => ({ role: t.role, content: t.content }));
     setTurns((prev) => [...prev, { role: "user", content: message }]);
 
+    const stop = new AbortController();
+    abortRef.current = stop;
     try {
-      const { data } = await api.post("/ai/assistant", { message, history });
+      const data = await askAssistant({ message, history }, {
+        signal: stop.signal,
+        onStatus: setStatus,
+      });
       setTurns((prev) => [...prev, {
         role: "assistant",
         content: data.reply || "",
         proposals: (data.proposals || []).map((p) => ({ ...p, state: "open" })),
       }]);
     } catch (e) {
-      setError(formatApiError(e) || "The assistant couldn't be reached.");
+      if (e?.name !== "AbortError") {
+        setError(e?.message || formatApiError(e) || "The assistant couldn't be reached.");
+      }
     } finally {
+      abortRef.current = null;
       setBusy(false);
+      setStatus("");
       inputRef.current?.focus();
     }
   }, [draft, busy, turns]);
@@ -284,7 +297,15 @@ export default function Assistant({ onApplied }) {
                 )}
                 {busy && (
                   <div className="flex items-center gap-2 text-[13px] font-medium text-neutral-400">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Thinking…
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <span>{status || "Thinking"}…</span>
+                    <button
+                      type="button"
+                      onClick={() => abortRef.current?.abort()}
+                      className="font-bold text-neutral-500 underline underline-offset-2 hover:text-neutral-800"
+                    >
+                      Stop
+                    </button>
                   </div>
                 )}
               </div>

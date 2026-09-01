@@ -14,6 +14,7 @@ fenced as untrusted data below, and the confirm step is the real backstop.
 import json
 import logging
 import re
+import time
 from typing import Any, Callable, Dict, List, Optional
 
 import openai
@@ -23,13 +24,57 @@ import ai_service
 logger = logging.getLogger("stallwise.ai.assistant")
 
 MODEL = ai_service._env("AI_ASSISTANT_MODEL") or ai_service.MODEL
-MAX_ROUNDS = 5          # tool call → result → tool call … before we stop
 MAX_TOKENS = int(ai_service._env("AI_ASSISTANT_MAX_TOKENS", "1500"))
 MAX_HISTORY = 12        # turns kept from the client, oldest dropped
 MAX_MESSAGE = 2000      # characters of a single seller message
 
+# Latency budget. Every round is a whole model call, so rounds multiply the
+# wait — and the seller is watching a spinner the entire time. Cloudflare cuts
+# an origin request off at 100s with a 524, which reaches the seller as a wall
+# of Cloudflare HTML rather than anything we wrote, so the whole turn has to
+# finish comfortably inside that.
+MAX_ROUNDS = int(ai_service._env("AI_ASSISTANT_MAX_ROUNDS", "3"))
+CALL_TIMEOUT = float(ai_service._env("AI_ASSISTANT_TIMEOUT", "40"))
+DEADLINE = float(ai_service._env("AI_ASSISTANT_DEADLINE", "75"))
+
 AIUnavailable = ai_service.AIUnavailable
 enabled = ai_service.enabled
+
+_client: Optional[openai.AsyncOpenAI] = None
+
+
+def _get_client() -> openai.AsyncOpenAI:
+    """A client of our own, not ai_service's.
+
+    Different job, different budget: the description writer streams, so its
+    first token arrives quickly and a 60s ceiling is invisible. This one blocks
+    until a whole round is done, so it fails fast instead — and never retries,
+    because a retry silently doubles a wait the seller is already sitting
+    through.
+    """
+    global _client
+    if _client is None:
+        if not ai_service._API_KEY:
+            raise AIUnavailable("No AI API key is configured")
+        _client = openai.AsyncOpenAI(
+            base_url=ai_service.BASE_URL,
+            api_key=ai_service._API_KEY,
+            timeout=CALL_TIMEOUT,
+            max_retries=0,
+        )
+    return _client
+
+
+# What each tool is doing, in the seller's words, so the panel can say
+# something truer than "Thinking…" while a round runs.
+BUSY_TEXT = {
+    "list_products": "Looking through your products",
+    "shop_overview": "Adding up this month",
+    "list_orders": "Reading your orders",
+    "get_settings": "Checking your shop settings",
+    "propose_product_update": "Working out that change",
+    "propose_settings_update": "Working out that change",
+}
 
 
 SYSTEM = """You are the shop assistant inside Stall Wise, a marketplace where small Indian sellers run their own storefronts. You are talking to the seller who owns the shop.
@@ -216,16 +261,22 @@ def validate_settings_proposal(patch: dict) -> dict:
     return out
 
 
-async def run(*, message: str, history: List[dict], tools: Dict[str, Callable]) -> dict:
-    """One assistant turn.
+async def run_stream(*, message: str, history: List[dict], tools: Dict[str, Callable]):
+    """One assistant turn, reported as it happens.
+
+    Yields progress events and finally a "done". The turn is not streamed from
+    the model — DeepSeek's tool calls over NIM streaming are known to arrive in
+    a shape agent clients mis-read, and a mangled tool call here is a mangled
+    proposal. So each round is a plain call, and what streams is our own
+    account of which round we are on. That is what the seller actually needed:
+    the old panel showed one spinner for the whole turn and looked hung.
 
     ``tools`` maps a tool name to an async callable already bound to the
     authenticated seller — this module never sees a seller id, so it cannot
     leak one into the model's reach.
-
-    Returns {"reply": str, "proposals": [...], "usedTools": [...]}.
     """
-    client = ai_service._get_client()
+    client = _get_client()
+    started = time.monotonic()
 
     convo: List[dict] = [{"role": "system", "content": SYSTEM}]
     for turn in history[-MAX_HISTORY:]:
@@ -238,8 +289,24 @@ async def run(*, message: str, history: List[dict], tools: Dict[str, Callable]) 
     proposals: List[dict] = []
     used: List[str] = []
 
+    def done(reply: str) -> dict:
+        logger.info("assistant turn finished in %.1fs, %d tool call(s): %s",
+                    time.monotonic() - started, len(used), ",".join(used) or "none")
+        return {"type": "done", "reply": reply, "proposals": proposals, "usedTools": used}
+
     try:
-        for _ in range(MAX_ROUNDS):
+        for round_no in range(MAX_ROUNDS):
+            spent = time.monotonic() - started
+            if spent > DEADLINE:
+                logger.warning("assistant hit its %.0fs deadline after %d round(s)",
+                               DEADLINE, round_no)
+                yield done(
+                    "That took longer than I'm allowed to spend on one question. "
+                    "Ask me for one thing at a time and I'll be quicker."
+                )
+                return
+
+            call_started = time.monotonic()
             completion = await client.chat.completions.create(
                 model=MODEL,
                 max_tokens=MAX_TOKENS,
@@ -248,17 +315,35 @@ async def run(*, message: str, history: List[dict], tools: Dict[str, Callable]) 
                 tools=TOOLS,
                 tool_choice="auto",
                 extra_body=ai_service._extra_body(),
+                # Never let one round eat the whole turn.
+                timeout=max(5.0, min(CALL_TIMEOUT, DEADLINE - spent)),
             )
             choice = completion.choices[0]
             calls = getattr(choice.message, "tool_calls", None) or []
+            text = (choice.message.content or "").strip()
+            finish = getattr(choice, "finish_reason", None)
+            logger.info(
+                "assistant round %d: %.1fs, finish=%s, %d chars, %d tool call(s)",
+                round_no + 1, time.monotonic() - call_started,
+                finish, len(text), len(calls))
 
             if not calls:
-                return {
-                    "reply": (choice.message.content or "").strip()
-                    or "I couldn't work that one out. Try asking a different way.",
-                    "proposals": proposals,
-                    "usedTools": used,
-                }
+                if not text:
+                    # A reasoning model that spends its whole allowance thinking
+                    # returns exactly this: no text, no calls, finish="length".
+                    # Say which knob fixes it rather than "try again".
+                    if finish == "length":
+                        logger.error(
+                            "assistant produced no answer within %d tokens (model=%s) — "
+                            "raise AI_ASSISTANT_MAX_TOKENS or set AI_THINKING=false",
+                            MAX_TOKENS, MODEL)
+                        yield done("I ran out of room before I got to an answer. "
+                                   "Try asking something a bit narrower.")
+                        return
+                    yield done("I couldn't work that one out. Try asking a different way.")
+                    return
+                yield done(text)
+                return
 
             convo.append({
                 "role": "assistant",
@@ -273,6 +358,7 @@ async def run(*, message: str, history: List[dict], tools: Dict[str, Callable]) 
             for call in calls:
                 name = call.function.name
                 used.append(name)
+                yield {"type": "status", "text": BUSY_TEXT.get(name, "Working on it")}
                 try:
                     args = json.loads(call.function.arguments or "{}")
                 except json.JSONDecodeError:
@@ -301,12 +387,17 @@ async def run(*, message: str, history: List[dict], tools: Dict[str, Callable]) 
                     "content": json.dumps(result, default=str)[:6000],
                 })
 
-        return {
-            "reply": "That turned into more steps than I can do at once. Try asking for one thing at a time.",
-            "proposals": proposals,
-            "usedTools": used,
-        }
+            yield {"type": "status", "text": "Putting that together"}
 
+        yield done("That turned into more steps than I can do at once. "
+                   "Try asking for one thing at a time.")
+
+    except openai.APITimeoutError as exc:
+        logger.error("assistant timed out after %.1fs (model=%s)",
+                     time.monotonic() - started, MODEL)
+        raise AIUnavailable(
+            "The assistant is taking too long to answer. It may be busy — try again in a moment."
+        ) from exc
     except openai.RateLimitError as exc:
         raise AIUnavailable("The assistant is busy right now. Try again in a moment.") from exc
     except openai.APIStatusError as exc:
@@ -321,3 +412,12 @@ async def run(*, message: str, history: List[dict], tools: Dict[str, Callable]) 
     except openai.APIError as exc:
         logger.error("assistant call failed: %s", exc)
         raise AIUnavailable("The assistant couldn't be reached. Try again in a moment.") from exc
+
+
+async def run(*, message: str, history: List[dict], tools: Dict[str, Callable]) -> dict:
+    """The whole turn as one value, for callers that cannot stream."""
+    final = {"reply": "", "proposals": [], "usedTools": []}
+    async for event in run_stream(message=message, history=history, tools=tools):
+        if event["type"] == "done":
+            final = {k: event[k] for k in ("reply", "proposals", "usedTools")}
+    return final

@@ -7,7 +7,10 @@ const backendUrl =
 
 export const API = `${backendUrl}/api`;
 
-const api = axios.create({ baseURL: API, withCredentials: true });
+// Without a timeout axios waits forever, so a stalled request leaves the UI
+// spinning with nothing to show and no way to recover but a reload. 60s is
+// past every normal call and short of Cloudflare's own 100s cut-off.
+const api = axios.create({ baseURL: API, withCredentials: true, timeout: 60000 });
 
 let isRefreshing = false;
 let failedQueue = [];

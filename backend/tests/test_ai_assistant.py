@@ -17,8 +17,13 @@ from tests.conftest import make_product, place_order
 
 
 # --- A fake model ---------------------------------------------------------
-def _message(content=None, tool_calls=None):
-    return types.SimpleNamespace(content=content, tool_calls=tool_calls)
+def _message(content=None, tool_calls=None, finish_reason=None):
+    """One choice off a chat completion, carrying its finish_reason."""
+    if finish_reason is None:
+        finish_reason = "tool_calls" if tool_calls else "stop"
+    return types.SimpleNamespace(
+        message=types.SimpleNamespace(content=content, tool_calls=tool_calls),
+        finish_reason=finish_reason)
 
 
 def _tool_call(name, args, call_id="call_1"):
@@ -38,8 +43,8 @@ class FakeModel:
 
     async def _create(self, **kwargs):
         self.requests.append(kwargs)
-        message = self.script.pop(0) if self.script else _message("Done.")
-        return types.SimpleNamespace(choices=[types.SimpleNamespace(message=message)])
+        choice = self.script.pop(0) if self.script else _message("Done.")
+        return types.SimpleNamespace(choices=[choice])
 
     def tool_results(self):
         """Every tool result we handed back, across all rounds."""
@@ -56,14 +61,43 @@ def model(monkeypatch):
         fake = FakeModel(*script)
         holder["fake"] = fake
         monkeypatch.setattr(ai_service, "enabled", lambda: True)
-        monkeypatch.setattr(ai_service, "_get_client", lambda: fake)
+        # The assistant builds its own client — shorter timeout, no retries —
+        # so patching ai_service's is not enough.
+        monkeypatch.setattr(ai_assistant, "_get_client", lambda: fake)
         return fake
 
     return install
 
 
+def sse(response):
+    """Parse an SSE body into the JSON payloads it carried."""
+    out = []
+    for block in response.text.split("\n\n"):
+        line = block.strip()
+        if line.startswith("data:"):
+            out.append(json.loads(line[5:].strip()))
+    return out
+
+
+class Turn:
+    """One assistant turn, read back off the event stream."""
+
+    def __init__(self, response):
+        self.response = response
+        self.status_code = response.status_code
+        self.events = sse(response) if response.status_code == 200 else []
+        self.done = next((e for e in self.events if e["type"] == "done"), None)
+        self.error = next((e for e in self.events if e["type"] == "error"), None)
+        self.statuses = [e["text"] for e in self.events if e["type"] == "status"]
+
+    def json(self):
+        """The shape the panel consumes."""
+        assert self.done is not None, f"no done event: {self.events}"
+        return {k: self.done[k] for k in ("reply", "proposals", "usedTools")}
+
+
 def chat(seller, message="hello"):
-    return seller.post("/api/ai/assistant", json={"message": message})
+    return Turn(seller.post("/api/ai/assistant", json={"message": message}))
 
 
 # --- Auth and the feature flag -------------------------------------------
@@ -322,6 +356,8 @@ def test_a_runaway_tool_loop_stops(seller_with_store, model):
     assert r.status_code == 200
     assert len(fake.requests) == ai_assistant.MAX_ROUNDS
     assert "one thing at a time" in r.json()["reply"]
+    # And the seller saw what it was doing the whole way, not one dead spinner.
+    assert r.statuses.count("Looking through your products") == ai_assistant.MAX_ROUNDS
 
 
 def test_provider_outage_is_a_503_not_a_500(seller_with_store, monkeypatch):
@@ -329,8 +365,106 @@ def test_provider_outage_is_a_503_not_a_500(seller_with_store, monkeypatch):
 
     async def boom(**kwargs):
         raise ai_assistant.AIUnavailable("The assistant couldn't be reached.")
+        yield  # pragma: no cover - makes this an async generator
 
-    monkeypatch.setattr(ai_assistant, "run", boom)
+    monkeypatch.setattr(ai_assistant, "run_stream", boom)
     r = chat(seller_with_store)
-    assert r.status_code == 503
-    assert "couldn't be reached" in r.json()["detail"]
+    # The response has already started, so the failure travels as an event.
+    assert r.status_code == 200
+    assert "couldn't be reached" in r.error["message"]
+
+
+# --- Latency: the seller must never sit on a dead spinner -----------------
+def test_progress_is_reported_before_the_answer(seller_with_store, model):
+    """The bug that started this: one spinner for a whole multi-call turn looks
+    identical to a hang. Each round now says what it is doing."""
+    make_product(seller_with_store)
+    model(_message(tool_calls=[_tool_call("list_orders", {})]),
+          _message(tool_calls=[_tool_call("shop_overview", {})]),
+          _message("You're all caught up."))
+
+    r = chat(seller_with_store, "how am I doing?")
+    # Each round names its own work, with a hand-off line between them.
+    assert r.statuses == ["Reading your orders", "Putting that together",
+                          "Adding up this month", "Putting that together"]
+    # And the status arrives before the answer, not bundled with it.
+    kinds = [e["type"] for e in r.events]
+    assert kinds.index("status") < kinds.index("done")
+
+
+def test_a_slow_model_gives_up_at_the_deadline(seller_with_store, model, monkeypatch):
+    """Cloudflare cuts the origin off at 100s and serves its own error page, so
+    the turn has to end first — with something we wrote."""
+    clock = {"t": 0.0}
+    monkeypatch.setattr(ai_assistant.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(ai_assistant, "DEADLINE", 75.0)
+    make_product(seller_with_store)
+
+    fake = model(_message(tool_calls=[_tool_call("list_products", {})]),
+                 _message(tool_calls=[_tool_call("list_products", {})]),
+                 _message("Never gets here."))
+    original = fake._create
+
+    async def slow(**kwargs):
+        clock["t"] += 50.0     # each round burns most of the budget
+        return await original(**kwargs)
+
+    fake.chat.completions.create = slow
+
+    r = chat(seller_with_store, "everything please")
+    assert r.status_code == 200
+    assert "longer than I'm allowed" in r.json()["reply"]
+    # Stopped at the deadline rather than running the full round budget.
+    assert len(fake.requests) == 2
+
+
+def test_each_call_is_capped_by_what_is_left_of_the_budget(seller_with_store, model, monkeypatch):
+    clock = {"t": 0.0}
+    monkeypatch.setattr(ai_assistant.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(ai_assistant, "DEADLINE", 75.0)
+    monkeypatch.setattr(ai_assistant, "CALL_TIMEOUT", 40.0)
+    make_product(seller_with_store)
+
+    fake = model(_message(tool_calls=[_tool_call("list_products", {})]),
+                 _message("Done."))
+    original = fake._create
+
+    async def tick(**kwargs):
+        clock["t"] += 45.0
+        return await original(**kwargs)
+
+    fake.chat.completions.create = tick
+    chat(seller_with_store, "hello")
+
+    # First round gets the full per-call ceiling; the second only what remains.
+    assert fake.requests[0]["timeout"] == 40.0
+    assert fake.requests[1]["timeout"] == 30.0
+
+
+def test_a_timeout_is_reported_as_a_timeout(seller_with_store, model):
+    import httpx
+    import openai
+
+    fake = model()
+
+    async def times_out(**kwargs):
+        raise openai.APITimeoutError(request=httpx.Request("POST", "http://x"))
+
+    fake.chat.completions.create = times_out
+    r = chat(seller_with_store, "hello")
+    assert "taking too long" in r.error["message"]
+
+
+def test_a_model_that_only_thinks_says_so(seller_with_store, model):
+    """A reasoning model can spend its whole token allowance and return nothing.
+    That is a config problem, so it must not read as 'try again'."""
+    model(_message(content="", finish_reason="length"))
+    r = chat(seller_with_store, "hello")
+    assert "ran out of room" in r.json()["reply"]
+
+
+def test_no_answer_at_all_still_ends_the_turn(seller_with_store, model):
+    model(_message(content=None))
+    r = chat(seller_with_store, "hello")
+    assert r.done is not None
+    assert r.json()["reply"]

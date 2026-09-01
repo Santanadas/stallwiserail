@@ -1642,19 +1642,33 @@ async def ai_assistant_chat(body: AssistantIn, request: Request,
     if not security.check_rate_limit(f"ai_chat:{user['user_id']}", max_requests=60, window_seconds=3600):
         raise HTTPException(status_code=429,
                             detail="You've used this hour's assistant messages. Try again shortly.")
-    try:
-        return await ai_assistant.run(
-            message=body.message,
-            history=[t.model_dump() for t in body.history],
-            tools=_assistant_tools(user, request),
-        )
-    except ai_assistant.AIUnavailable as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("assistant turn failed")
-        raise HTTPException(status_code=500, detail="The assistant hit a problem. Try again.")
+    tools = _assistant_tools(user, request)
+    history = [t.model_dump() for t in body.history]
+
+    async def events():
+        """Server-sent events, so the panel can say what it is doing.
+
+        A turn is several model calls; on one HTTP response the seller stares
+        at a spinner for all of them and reasonably concludes it has hung.
+        """
+        try:
+            async for event in ai_assistant.run_stream(
+                message=body.message, history=history, tools=tools):
+                yield f"data: {json.dumps(event)}\n\n"
+        except ai_assistant.AIUnavailable as exc:
+            # Headers are already out, so the error travels as an event.
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("assistant turn failed")
+            yield f"data: {json.dumps({'type': 'error', 'message': 'The assistant hit a problem. Try again.'})}\n\n"
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+    )
 
 
 @api.post("/ai/assistant/apply")
