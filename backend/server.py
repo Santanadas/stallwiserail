@@ -1033,6 +1033,28 @@ def _route_public(route: dict) -> dict:
     }
 
 
+async def _save_route(user, store, account_id, legal, contact, phone, beneficiary,
+                      account_enc, bank_last4, ifsc, *, status, product_config_id,
+                      settlement_status):
+    """Write the seller's Route row. Used by both the success and the
+    part-way-through paths, so a linked account is never left only at Razorpay."""
+    await db.execute(
+        """
+        INSERT INTO seller_routes (seller_id, store_slug, account_id, mode, status, legal_business_name, contact_name, phone, beneficiary_name, account_number_enc, account_number_last4, ifsc, product_config_id, settlement_status, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        ON CONFLICT (seller_id) DO UPDATE SET
+            store_slug = EXCLUDED.store_slug, account_id = EXCLUDED.account_id, mode = EXCLUDED.mode,
+            status = EXCLUDED.status, legal_business_name = EXCLUDED.legal_business_name,
+            contact_name = EXCLUDED.contact_name, phone = EXCLUDED.phone, beneficiary_name = EXCLUDED.beneficiary_name,
+            account_number_enc = EXCLUDED.account_number_enc, account_number_last4 = EXCLUDED.account_number_last4,
+            ifsc = EXCLUDED.ifsc, product_config_id = EXCLUDED.product_config_id,
+            settlement_status = EXCLUDED.settlement_status, updated_at = EXCLUDED.updated_at
+        """,
+        user["user_id"], store["slug"], account_id, "razorpay", status,
+        legal, contact, phone, beneficiary, account_enc, bank_last4, ifsc,
+        product_config_id, settlement_status, iso(now()))
+
+
 @api.post("/seller/route/onboard")
 async def route_onboard(body: RouteOnboardIn, user=Depends(get_current_user)):
     store = await get_my_store(user)
@@ -1045,6 +1067,7 @@ async def route_onboard(body: RouteOnboardIn, user=Depends(get_current_user)):
     clean_ifsc = security.sanitize_text(body.ifsc, 11).upper()
     clean_account = security.sanitize_text(body.account_number, 34).strip()
     bank_last4 = clean_account[-4:] if len(clean_account) >= 4 else None
+    account_number_enc = (lambda: security.encrypt_secret(clean_account) if clean_account else None)
 
     if not clean_account or not clean_ifsc or not clean_beneficiary:
         raise HTTPException(status_code=400, detail="Beneficiary name, account number and IFSC are all required for direct payouts")
@@ -1060,30 +1083,40 @@ async def route_onboard(body: RouteOnboardIn, user=Depends(get_current_user)):
         "beneficiary_name": clean_beneficiary, "account_number": clean_account, "ifsc": clean_ifsc,
         "profile": {"category": "ecommerce", "subcategory": "marketplace"},
     }
+    # Resume rather than start over. Razorpay enforces a unique reference_id per
+    # linked account, so if a previous attempt got as far as creating one and
+    # then failed, re-creating it fails for ever and the seller is locked out of
+    # onboarding permanently. Whatever went wrong the first time, it must not
+    # become unrecoverable.
+    existing = await db.fetch_one(
+        "SELECT account_id FROM seller_routes WHERE seller_id = $1", user["user_id"])
+    prior_account = (existing or {}).get("account_id")
+
     try:
-        result = await asyncio.to_thread(route_service.create_linked_account, payload)
+        result = await asyncio.to_thread(
+            route_service.create_linked_account, payload, prior_account)
     except route_service.RouteError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        # Save the half-finished account before reporting the failure, so the
+        # next attempt picks up where this one stopped.
+        if getattr(e, "account_id", None):
+            await _save_route(user, store, e.account_id, clean_legal, clean_contact,
+                              clean_phone, clean_beneficiary, account_number_enc(),
+                              bank_last4, clean_ifsc,
+                              status=e.status or "created",
+                              product_config_id=e.product_config_id,
+                              settlement_status=e.settlement_status or "pending")
+        # Razorpay saying the details are wrong is the seller's to fix and must
+        # reach them as a plain 400 — a 5xx here gets turned into a gateway
+        # error page by the proxy in front of us, so the seller sees "the origin
+        # returned an invalid response" instead of "that IFSC code is invalid".
+        raise HTTPException(status_code=400 if e.is_sellers_to_fix else 502,
+                            detail=str(e))
 
-    account_number_enc = security.encrypt_secret(clean_account) if clean_account else None
-    updated_at = iso(now())
-
-    await db.execute(
-        """
-        INSERT INTO seller_routes (seller_id, store_slug, account_id, mode, status, legal_business_name, contact_name, phone, beneficiary_name, account_number_enc, account_number_last4, ifsc, product_config_id, settlement_status, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-        ON CONFLICT (seller_id) DO UPDATE SET
-            store_slug = EXCLUDED.store_slug, account_id = EXCLUDED.account_id, mode = EXCLUDED.mode,
-            status = EXCLUDED.status, legal_business_name = EXCLUDED.legal_business_name,
-            contact_name = EXCLUDED.contact_name, phone = EXCLUDED.phone, beneficiary_name = EXCLUDED.beneficiary_name,
-            account_number_enc = EXCLUDED.account_number_enc, account_number_last4 = EXCLUDED.account_number_last4,
-            ifsc = EXCLUDED.ifsc, product_config_id = EXCLUDED.product_config_id,
-            settlement_status = EXCLUDED.settlement_status, updated_at = EXCLUDED.updated_at
-        """,
-        user["user_id"], store["slug"], result["account_id"], result["mode"], result["status"],
-        clean_legal, clean_contact, clean_phone, clean_beneficiary, account_number_enc, bank_last4, clean_ifsc,
-        result.get("product_config_id"), result.get("settlement_status"), updated_at
-    )
+    await _save_route(user, store, result["account_id"], clean_legal, clean_contact,
+                      clean_phone, clean_beneficiary, account_number_enc(), bank_last4,
+                      clean_ifsc, status=result["status"],
+                      product_config_id=result.get("product_config_id"),
+                      settlement_status=result.get("settlement_status"))
     saved = await db.fetch_one("SELECT * FROM seller_routes WHERE seller_id = $1", user["user_id"])
     return _route_public(saved)
 

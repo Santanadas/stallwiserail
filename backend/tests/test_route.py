@@ -21,9 +21,9 @@ def fake_route(monkeypatch):
     """Stand in for the live Razorpay Route calls."""
     calls = []
 
-    def _create(payload):
-        calls.append(payload)
-        return {"mode": "razorpay", "account_id": "acc_TEST123456",
+    def _create(payload, existing_account_id=None):
+        calls.append({"payload": payload, "resuming": existing_account_id})
+        return {"mode": "razorpay", "account_id": existing_account_id or "acc_TEST123456",
                 "status": "created", "product_config_id": "pcfg_1",
                 "settlement_status": "activated"}
 
@@ -47,7 +47,7 @@ def test_successful_onboarding_stores_bank_details(seller_with_store, fake_route
     assert body["settlementStatus"] == "activated"
 
     # The bank details actually reach Razorpay — that was the original bug.
-    sent = fake_route[0]
+    sent = fake_route[0]["payload"]
     assert sent["account_number"] == "123456789012"
     assert sent["ifsc"] == "HDFC0001234"
     assert sent["beneficiary_name"] == "Aisha Sharma"
@@ -74,7 +74,7 @@ def test_invalid_bank_details_rejected_before_hitting_razorpay(
 
 
 def test_route_error_surfaces_as_502(seller_with_store, monkeypatch):
-    def _boom(payload):
+    def _boom(payload, existing_account_id=None):
         raise route_service.RouteError("Route is not enabled on this account.")
     monkeypatch.setattr(route_service, "create_linked_account", _boom)
 
@@ -103,6 +103,7 @@ def test_onboarding_requires_auth(app_client):
 def test_checkout_attaches_transfer_once_route_is_live(app_client, seller_with_store, fake_route):
     from conftest import make_product, place_order
     _onboard(seller_with_store)
+    account_id = seller_with_store.get("/api/seller/route").json()["accountIdLast4"]
     p = make_product(seller_with_store, price=1000)
     place_order(app_client, seller_with_store.store_slug,
                 [{"productId": p["product_id"], "quantity": 1, "optionSelections": {}}])
@@ -110,7 +111,7 @@ def test_checkout_attaches_transfer_once_route_is_live(app_client, seller_with_s
     created = app_client.fake_razorpay.order.created[-1]
     transfers = created.get("transfers")
     assert transfers, "a live route must split the payment"
-    assert transfers[0]["account"] == "acc_TEST123456"
+    assert transfers[0]["account"].endswith(account_id)
     assert transfers[0]["amount"] == 90000, "seller gets 90% of 1000 INR in paise"
 
 
@@ -198,3 +199,109 @@ def test_fetch_account_status_is_safe_on_error(monkeypatch):
     monkeypatch.setattr(route_service, "_api", lambda *a, **k: _Resp(500, None, "boom"))
     assert route_service.fetch_account_status("acc_1", "pcfg_1") == {}
     assert route_service.fetch_account_status("") == {}
+
+
+# ------------------- a failed attempt must stay retryable
+VALID_ONBOARD = dict(VALID)
+
+
+def test_a_failure_after_the_account_exists_is_saved_not_orphaned(
+        seller_without_payouts, monkeypatch):
+    """Onboarding is three Razorpay calls. If step 1 lands and step 2 fails, the
+    account exists at Razorpay whether we recorded it or not — and Razorpay
+    enforces a unique reference_id, so re-creating it fails for ever. Not saving
+    it locked the seller out of onboarding permanently."""
+    def _half_done(payload, existing_account_id=None):
+        raise route_service.RouteError(
+            "Could not enable Route for this account.",
+            account_id="acc_HALFDONE01", status="created")
+
+    monkeypatch.setattr(route_service, "create_linked_account", _half_done)
+    r = _onboard(seller_without_payouts)
+    assert r.status_code == 502
+
+    # The account was kept, so the next attempt has something to resume from.
+    saved = seller_without_payouts.get("/api/seller/route").json()
+    assert saved["connected"] is True
+    assert saved["detailsSubmitted"] is True
+    assert saved["payoutsLive"] is False, "half-finished is not ready to be paid"
+
+
+def test_the_retry_resumes_instead_of_creating_a_second_account(
+        seller_without_payouts, monkeypatch):
+    attempts = []
+
+    def _half_done(payload, existing_account_id=None):
+        attempts.append(existing_account_id)
+        raise route_service.RouteError("gateway hiccup", account_id="acc_HALFDONE01",
+                                       status="created")
+
+    monkeypatch.setattr(route_service, "create_linked_account", _half_done)
+    _onboard(seller_without_payouts)
+    _onboard(seller_without_payouts)
+
+    assert attempts == [None, "acc_HALFDONE01"], (
+        "the retry must resume the existing account, not create a duplicate")
+
+
+def test_a_resumed_attempt_can_finish(seller_without_payouts, monkeypatch):
+    state = {"fail": True}
+
+    def _flaky(payload, existing_account_id=None):
+        if state["fail"]:
+            state["fail"] = False
+            raise route_service.RouteError("gateway hiccup", account_id="acc_HALFDONE01",
+                                           status="created")
+        return {"mode": "razorpay", "account_id": existing_account_id or "acc_NEW",
+                "status": "created", "product_config_id": "pcfg_9",
+                "settlement_status": "activated"}
+
+    monkeypatch.setattr(route_service, "create_linked_account", _flaky)
+    assert _onboard(seller_without_payouts).status_code == 502
+    second = _onboard(seller_without_payouts)
+    assert second.status_code == 200
+    assert second.json()["payoutsLive"] is True
+
+    # And it finished on acc_HALFDONE01, not the acc_NEW a fresh create returns.
+    route = seller_without_payouts.get("/api/seller/route").json()
+    assert route["accountIdLast4"] == "NE01"   # acc_HALFDONE01[-4:]
+
+
+def test_a_failure_before_any_account_exists_saves_nothing(
+        seller_without_payouts, monkeypatch):
+    def _boom(payload, existing_account_id=None):
+        raise route_service.RouteError("Route is not enabled on this account.")
+
+    monkeypatch.setattr(route_service, "create_linked_account", _boom)
+    assert _onboard(seller_without_payouts).status_code == 502
+    assert seller_without_payouts.get("/api/seller/route").json() == {"connected": False}
+
+
+def test_razorpay_rejecting_the_details_reaches_the_seller_as_a_400(
+        seller_without_payouts, monkeypatch):
+    """A 5xx gets replaced by the proxy's own gateway error page, so the seller
+    sees "the origin returned an invalid response" instead of the real reason.
+    Anything Razorpay calls a client error has to come back as one."""
+    def _rejected(payload, existing_account_id=None):
+        raise route_service.RouteError("The IFSC code is invalid.", upstream_status=400)
+
+    monkeypatch.setattr(route_service, "create_linked_account", _rejected)
+    r = _onboard(seller_without_payouts)
+    assert r.status_code == 400
+    assert r.json()["detail"] == "The IFSC code is invalid."
+
+
+def test_a_gateway_outage_is_still_a_502(seller_without_payouts, monkeypatch):
+    def _down(payload, existing_account_id=None):
+        raise route_service.RouteError("Could not reach the payment gateway.")
+
+    monkeypatch.setattr(route_service, "create_linked_account", _down)
+    assert _onboard(seller_without_payouts).status_code == 502
+
+
+def test_a_razorpay_5xx_is_not_blamed_on_the_seller(seller_without_payouts, monkeypatch):
+    def _their_fault(payload, existing_account_id=None):
+        raise route_service.RouteError("Internal error", upstream_status=500)
+
+    monkeypatch.setattr(route_service, "create_linked_account", _their_fault)
+    assert _onboard(seller_without_payouts).status_code == 502
