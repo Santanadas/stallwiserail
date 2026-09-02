@@ -34,9 +34,16 @@ export default function ProductPage() {
   }, [storeSlug, productSlug]);
   useEffect(() => { load(); }, [load]);
 
+  // The shop can only be offered online payment if the seller can actually be
+  // paid: checkout refuses otherwise, and finding that out after typing in a
+  // delivery address is worse than never seeing the option.
+  const payable = allowedPayments.filter(
+    (m) => m !== "online" || data?.acceptsOnline !== false
+  );
+
   useEffect(() => {
-    if (allowedPayments.length && !allowedPayments.includes(payMethod)) setPayMethod(allowedPayments[0]);
-  }, [allowedPayments, payMethod]);
+    if (payable.length && !payable.includes(payMethod)) setPayMethod(payable[0]);
+  }, [payable, payMethod]);
 
   const product = data?.product;
   const store = data?.store;
@@ -302,7 +309,7 @@ export default function ProductPage() {
         checkout={() => checkout(buyer)}
         placing={placing}
         err={err}
-        allowedPayments={allowedPayments}
+        allowedPayments={payable}
         payMethod={payMethod}
         setPayMethod={setPayMethod}
       />

@@ -476,7 +476,10 @@ function RouteSection({ onChange }) {
   };
 
   const disconnect = async () => {
-    if (confirm("Disconnect direct bank payouts? New orders will settle to the platform until you reconnect.")) {
+    // This used to say the money would settle to the platform. It does not:
+    // checkout refuses an online payment it cannot forward, so disconnecting
+    // takes the shop down to cash on delivery.
+    if (confirm("Disconnect your bank? Your shop will only be able to take cash on delivery until you reconnect.")) {
       await api.delete("/seller/route");
       setRoute(null);
       onChange();

@@ -83,14 +83,17 @@ def test_route_error_surfaces_as_502(seller_with_store, monkeypatch):
     assert "not enabled" in r.json()["detail"].lower()
 
 
-def test_get_and_disconnect_route(seller_with_store, fake_route):
-    assert seller_with_store.get("/api/seller/route").json() == {"connected": False}
-    _onboard(seller_with_store)
-    assert seller_with_store.get("/api/seller/route").json()["connected"] is True
-    assert seller_with_store.get("/api/stores/me").json()["routeConnected"] is True
+def test_get_and_disconnect_route(seller_without_payouts, fake_route):
+    """Starts from a shop that has not onboarded yet, which is where a real
+    seller starts."""
+    seller = seller_without_payouts
+    assert seller.get("/api/seller/route").json() == {"connected": False}
+    _onboard(seller)
+    assert seller.get("/api/seller/route").json()["connected"] is True
+    assert seller.get("/api/stores/me").json()["routeConnected"] is True
 
-    seller_with_store.delete("/api/seller/route")
-    assert seller_with_store.get("/api/seller/route").json() == {"connected": False}
+    seller.delete("/api/seller/route")
+    assert seller.get("/api/seller/route").json() == {"connected": False}
 
 
 def test_onboarding_requires_auth(app_client):

@@ -116,11 +116,23 @@ export default function HomeSection({ summary, loading, error, onRetry, orders, 
     );
   }
   if (!queue.bankReady) {
+    // Two different situations. Until payouts are live the shop cannot take an
+    // online payment at all — checkout refuses it rather than hold money with
+    // no way to forward it — so the wording has to be blunt about that, and
+    // has to stop telling a seller who is waiting on Razorpay to go and do
+    // something they have already done.
+    const waiting = queue.bankSubmitted;
     tasks.push(
-      <Task key="bank" tone="amber" icon={Landmark} tag="Action needed"
-        headline="Add your bank"
-        note="Until this is done, money from online orders cannot reach you."
-        cta="Add bank details" onClick={() => onNav("payouts")} />
+      <Task key="bank" tone="amber" icon={Landmark}
+        tag={waiting ? "Being verified" : "Action needed"}
+        headline={waiting ? "Bank verification pending" : "Add your bank"}
+        note={
+          waiting
+            ? "Razorpay is checking your details. Until that finishes your shop can only take cash on delivery."
+            : "Your shop can only take cash on delivery until this is done — online payments are turned off because there is nowhere to send the money."
+        }
+        cta={waiting ? "Check status" : "Add bank details"}
+        onClick={() => onNav("payouts")} />
     );
   }
 

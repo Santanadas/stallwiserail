@@ -819,7 +819,14 @@ async def public_shop(slug: str):
     rows = await db.fetch_all("SELECT * FROM products WHERE store_slug = $1 AND active = TRUE ORDER BY created_at DESC", slug.lower().strip())
     products = [public_product(r) for r in rows]
     sub_status = await effective_sub_status(seller) if seller else "inactive"
+    route = await db.fetch_one(
+        "SELECT account_id, mode, status, settlement_status FROM seller_routes WHERE seller_id = $1",
+        store["seller_id"])
     return {
+        # Checkout refuses an online payment this shop cannot be paid for, so a
+        # buyer must not be offered it in the first place — being told "no"
+        # after filling in a delivery address is worse than never seeing it.
+        "acceptsOnline": _payouts_live(route),
         "store": {
             "name": store["name"], "slug": store["slug"], "bio": store.get("bio", ""),
             # The buyer has to be able to work out what they will actually pay.
@@ -861,7 +868,14 @@ async def public_product_detail(slug: str, product_slug: str):
         s, row["product_id"],
     )
     sub_status = await effective_sub_status(seller) if seller else "inactive"
+    route = await db.fetch_one(
+        "SELECT account_id, mode, status, settlement_status FROM seller_routes WHERE seller_id = $1",
+        store["seller_id"])
     return {
+        # Checkout refuses an online payment this shop cannot be paid for, so a
+        # buyer must not be offered it in the first place — being told "no"
+        # after filling in a delivery address is worse than never seeing it.
+        "acceptsOnline": _payouts_live(route),
         "store": {
             "name": store["name"], "slug": store["slug"], "bio": store.get("bio", ""),
             # Same reason as the shop page: the cart on this page has to be able
@@ -980,13 +994,38 @@ async def serve_file(path: str, request: Request):
 
 
 # ======================= Seller Route (Razorpay Partner) =======================
+# Settlement states in which Razorpay will actually move money to the seller.
+# The linked account itself often sits at "created" long after transfers work,
+# so it is the Route product configuration that decides this, not the account.
+_SETTLEMENT_LIVE = {"activated", "configured", "mock"}
+
+
+def _payouts_live(route: Optional[dict]) -> bool:
+    """Can this seller actually receive money?
+
+    Razorpay activates a linked account and its Route product separately, and
+    it is the product configuration that settles to the seller's bank. The
+    states before it — requested, under_review, needs_clarification, pending —
+    mean a transfer would be rejected, so they are not "ready" however much of
+    the form the seller has filled in.
+    """
+    if not route or not route.get("account_id"):
+        return False
+    if route.get("mode") == "mock":
+        return True
+    return (route.get("settlement_status") or "").lower() in _SETTLEMENT_LIVE
+
+
 def _route_public(route: dict) -> dict:
     return {
         "connected": True,
         "mode": route.get("mode"),
         "status": route.get("status"),
         "settlementStatus": route.get("settlement_status"),
-        "payoutsLive": route.get("mode") == "razorpay",
+        # Whether money can actually reach them, not merely whether they typed
+        # their details in.
+        "payoutsLive": _payouts_live(route),
+        "detailsSubmitted": bool(route.get("account_id")),
         "accountIdLast4": (route.get("account_id") or "")[-4:],
         "beneficiaryName": route.get("beneficiary_name"),
         "ifsc": route.get("ifsc"),
@@ -1347,8 +1386,16 @@ async def dashboard_summary(request: Request, user=Depends(get_current_user)):
     top = lambda d, k: sorted(d, key=k, reverse=True)
     repeat = sum(1 for b in buyers.values() if b["orders"] > 1)
 
-    route = await db.fetch_one("SELECT status FROM seller_routes WHERE seller_id = $1", user["user_id"])
-    bank_ready = bool(route and route.get("status") in ("activated", "created", "mock"))
+    # _payouts_live needs the settlement state and the account id, not just the
+    # account status — selecting one column made it answer "not ready" always.
+    route = await db.fetch_one(
+        "SELECT account_id, mode, status, settlement_status FROM seller_routes WHERE seller_id = $1",
+        user["user_id"])
+    # "created" is the state a linked account is in *before* Razorpay verifies
+    # it, and transfers do not work there. Counting it as ready told sellers
+    # "Bank account verified" the moment they submitted the form, while their
+    # shop still could not take an online payment.
+    bank_ready = _payouts_live(route)
 
     return {
         "generatedAt": iso(now_dt),
@@ -1362,6 +1409,10 @@ async def dashboard_summary(request: Request, user=Depends(get_current_user)):
             "outOfStock": len(out_of_stock),
             "lowStockTitles": [p["title"] for p in (low_stock + out_of_stock)[:4]],
             "bankReady": bank_ready,
+            # Submitted-but-unverified is a different message from never
+            # started: one needs the seller to do something, the other needs
+            # them to wait.
+            "bankSubmitted": bool(route and route.get("account_id")),
         },
         "metrics": {
             "grossThisMonth": round(gross_this, 2),
@@ -2135,7 +2186,15 @@ async def checkout(slug: str, body: OrderIn, request: Request):
         "receipt": order_id[:40],
         "notes": {"platform": "Stall Wise", "storeSlug": store["slug"], "orderId": order_id},
     }
+    # No linked account means no way to forward this seller their money. Taking
+    # the payment anyway would leave it sitting in the platform account with
+    # nothing to move it on, so the shop simply cannot sell online yet.
     routed = bool(route and route.get("mode") == "razorpay" and route.get("account_id"))
+    if not routed:
+        logger.warning("online checkout refused for %s — no linked payout account", store["slug"])
+        raise HTTPException(
+            status_code=503,
+            detail="This shop isn't set up for online payments yet. Try cash on delivery, or come back shortly.")
     if routed:
         order_payload["transfers"] = [{
             "account": route["account_id"],
@@ -2152,17 +2211,16 @@ async def checkout(slug: str, body: OrderIn, request: Request):
     try:
         rp = await asyncio.to_thread(rc.order.create, order_payload)
     except Exception as e:
-        if routed:
-            logger.warning(f"Razorpay routed order create failed ({e}); retrying without transfer")
-            order_payload.pop("transfers", None)
-            try:
-                rp = await asyncio.to_thread(rc.order.create, order_payload)
-            except Exception as e2:
-                logger.error(f"Razorpay order creation failed: {e2}")
-                raise HTTPException(status_code=502, detail="Could not start the payment. Please try again.")
-        else:
-            logger.error(f"Razorpay order creation failed: {e}")
-            raise HTTPException(status_code=502, detail="Could not start the payment. Please try again.")
+        # This used to retry without the transfer. That succeeded, so the buyer
+        # paid, the order completed, and every rupee landed in the platform
+        # account with the seller never paid and nobody told — a warning in a
+        # log file was the only trace. Refusing costs a sale; the alternative
+        # costs someone else's money.
+        logger.error("Razorpay order creation failed for %s (seller %s): %s",
+                     order_id, store["seller_id"], e)
+        raise HTTPException(
+            status_code=503,
+            detail="This shop can't take online payments right now. Try cash on delivery, or come back shortly.")
 
     rp_order_id = rp["id"]
     rp_key_id = plat_kid

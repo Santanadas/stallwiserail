@@ -273,9 +273,27 @@ def make_seller(app_client):
 
 @pytest.fixture()
 def seller_with_store(make_seller):
+    """A shop that can trade: handle created and payouts linked.
+
+    The payout account is part of the baseline because without one the shop
+    cannot accept an online payment at all — see link_payout_account. Tests
+    about onboarding itself use `seller_without_payouts`.
+    """
     s = make_seller()
     slug = f"shop-{uuid.uuid4().hex[:8]}"
     r = s.post("/api/stores", json={"name": "Test Shop", "slug": slug, "bio": "Hand-made things."})
+    assert r.status_code == 200, r.text
+    s.store_slug = slug
+    link_payout_account(s)
+    return s
+
+
+@pytest.fixture()
+def seller_without_payouts(make_seller):
+    """A shop mid-onboarding: listed, but with nowhere to send money yet."""
+    s = make_seller()
+    slug = f"shop-{uuid.uuid4().hex[:8]}"
+    r = s.post("/api/stores", json={"name": "New Shop", "slug": slug, "bio": ""})
     assert r.status_code == 200, r.text
     s.store_slug = slug
     return s
@@ -296,6 +314,36 @@ def make_product(seller, **overrides):
     r = seller.post("/api/products", json=payload)
     assert r.status_code == 200, r.text
     return r.json()
+
+
+def link_payout_account(seller, status="activated", settlement_status="activated"):
+    """Give a seller the Razorpay Route linked account that onboarding creates.
+
+    A shop with nowhere to send the money cannot take online payments at all —
+    the platform would be holding funds it has no way to forward — so any test
+    that pays online needs this, exactly as a real seller needs to finish
+    onboarding before their first online sale.
+    """
+    import uuid as _uuid
+
+    store = seller.get("/api/stores/me").json()
+    raw_execute(
+        """
+        INSERT INTO seller_routes
+            (seller_id, store_slug, account_id, mode, status, settlement_status, updated_at)
+        VALUES ($1, $2, $3, 'razorpay', $4, $5, $6)
+        ON CONFLICT (seller_id) DO UPDATE SET
+            account_id = EXCLUDED.account_id, mode = EXCLUDED.mode,
+            status = EXCLUDED.status, settlement_status = EXCLUDED.settlement_status
+        """,
+        store["sellerId"], store["slug"], f"acc_{_uuid.uuid4().hex[:14]}",
+        status, settlement_status, iso_now())
+    return store
+
+
+def iso_now():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
 
 
 def place_order(client, store_slug, items, payment_method="online",
