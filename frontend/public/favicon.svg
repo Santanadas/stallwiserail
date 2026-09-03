@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Stall Wise">
+  <title>Stall Wise</title>
+  <!--
+    A market stall awning — the thing the product is named for, and a shape that
+    survives 16px, where a letterform or any detail turns to mush. Brand orange
+    tile, one white silhouette, nothing else.
+  -->
+  <rect width="64" height="64" rx="14" fill="#FF4F00"/>
+  <path fill="#FFFFFF"
+        d="M17 20h30l8 17
+           a5.75 5.75 0 0 1-11.5 0
+           a5.75 5.75 0 0 1-11.5 0
+           a5.75 5.75 0 0 1-11.5 0
+           a5.75 5.75 0 0 1-11.5 0
+           z"/>
+</svg>

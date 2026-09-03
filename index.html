@@ -36,6 +36,14 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="Stall Wise" />
 
+  <!-- Icons. The SVG is what modern browsers use; the .ico is the fallback and
+       is also what Google fetches for search results. Order matters: browsers
+       take the last icon they understand. -->
+  <link rel="icon" href="/favicon.ico" sizes="48x48" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="manifest" href="/site.webmanifest" />
+
   <link rel="preconnect" href="https://api.fontshare.com" />
   <link rel="preconnect" href="https://cdn.fontshare.com" crossorigin />
   <link href="https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@800,900,700&f[]=satoshi@400,500,700&display=swap"
@@ -51,7 +59,7 @@
             "@id": "https://stallwise.in/#organization",
             "name": "Stall Wise",
             "url": "https://stallwise.in/",
-            "logo": "https://stallwise.in/favicon.ico",
+            "logo": "https://stallwise.in/icon-512.png",
             "description": "Direct-payout multi-vendor marketplace platform for independent creators and merchants.",
             "sameAs": []
           },
