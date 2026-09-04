@@ -2564,7 +2564,11 @@ async def get_subscription(user=Depends(get_current_user)):
         "subscriptionStatus": status,
         "premiumTier": PREMIUM_TIER,
         "freeTier": FREE_TIER,
-        "commissionRate": 0.00 if status == "active" else 0.10,
+        # Was hardcoded 0.00 for Pro while checkout kept taking 10% and
+        # /api/dashboard/summary reported 10% — the same seller could be told
+        # two different rates, and neither endpoint was what actually came out
+        # of their money. One source of truth, the one the transfer uses.
+        "commissionRate": COMMISSION_RATE_PRO if status == "active" else COMMISSION_RATE_FREE,
         "plans": {"monthly": PRO_MONTHLY_AMOUNT, "yearly": PRO_YEARLY_AMOUNT},
         "currency": SUB_CURRENCY,
         "billingConfigured": bool(kid),

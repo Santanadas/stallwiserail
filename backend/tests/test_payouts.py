@@ -147,3 +147,33 @@ def test_the_dashboard_separates_waiting_from_not_started(seller_without_payouts
     link_payout_account(seller_without_payouts, settlement_status="activated")
     after = seller_without_payouts.get("/api/dashboard/summary").json()["queue"]
     assert after["bankReady"] is True and after["bankSubmitted"] is True
+
+
+# --- The rate we quote has to be the rate we take -------------------------
+def test_every_endpoint_quotes_the_rate_that_is_actually_charged(
+        app_client, seller_with_store):
+    """/api/subscription hardcoded 0% for Pro while checkout took 10% and the
+    dashboard reported 10%. A seller could be told two different rates, and
+    neither was what left their money."""
+    quoted_sub = seller_with_store.get("/api/subscription").json()["commissionRate"]
+    quoted_dash = seller_with_store.get("/api/dashboard/summary").json()["metrics"]["commissionRate"]
+    assert quoted_sub == quoted_dash
+
+    product = make_product(seller_with_store, price=1000)
+    place_order(app_client, seller_with_store.store_slug,
+                [{"productId": product["product_id"], "quantity": 1, "optionSelections": {}}])
+
+    created = app_client.fake_razorpay.order.created[-1]
+    charged = 1.0 - (created["transfers"][0]["amount"] / created["amount"])
+    assert round(charged, 4) == round(quoted_sub, 4), (
+        f"quoted {quoted_sub:.0%} but took {charged:.0%}")
+
+
+def test_a_pro_seller_is_quoted_the_pro_rate(seller_with_store, monkeypatch):
+    monkeypatch.setattr(server, "effective_sub_status",
+                        lambda user: _immediately("active"))
+    assert seller_with_store.get("/api/subscription").json()["commissionRate"] == server.COMMISSION_RATE_PRO
+
+
+async def _immediately(value):
+    return value
