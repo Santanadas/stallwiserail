@@ -506,7 +506,37 @@ _POST_MIGRATION_INDEXES = [
 ]
 
 
+# Tables whose feature has been removed. Dropping them is the point: this one
+# held sellers' live Razorpay key secrets, written by a "connect your own
+# gateway" flow that no checkout ever read. Leaving it behind means keeping
+# payment credentials at rest that nothing has a use for. The row count is
+# logged before the drop so it is on the record whether any seller ever handed
+# theirs over and should rotate them.
+_DROPPED_TABLES = ("seller_gateways",)
+
+
+def _log_drop(table: str, rows) -> None:
+    if rows:
+        logger.warning(
+            "dropping obsolete table %s which held %d row(s) — those sellers "
+            "supplied gateway API secrets that were never used; they should "
+            "rotate those keys", table, rows)
+    else:
+        logger.info("dropping obsolete table %s (empty)", table)
+
+
 def _sqlite_migrate(c: sqlite3.Cursor):
+    for table in _DROPPED_TABLES:
+        try:
+            rows = c.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        except Exception:
+            continue  # already gone
+        try:
+            _log_drop(table, rows)
+            c.execute(f"DROP TABLE IF EXISTS {table}")
+        except Exception as e:
+            logger.warning(f"sqlite drop {table}: {e}")
+
     for table, cols in _COLUMN_MIGRATIONS.items():
         try:
             existing = {row[1] for row in c.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -542,6 +572,16 @@ async def _pg_migrate(pool: asyncpg.Pool):
                 await conn.execute(stmt)
             except Exception as e:
                 logger.warning(f"pg index: {e}")
+        for table in _DROPPED_TABLES:
+            try:
+                rows = await conn.fetchval(f"SELECT COUNT(*) FROM {table}")
+            except Exception:
+                continue  # already gone
+            try:
+                _log_drop(table, rows)
+                await conn.execute(f"DROP TABLE IF EXISTS {table}")
+            except Exception as e:
+                logger.warning(f"pg drop {table}: {e}")
 
 
 def _get_sqlite_conn() -> sqlite3.Connection:

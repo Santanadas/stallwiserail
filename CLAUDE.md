@@ -70,8 +70,13 @@ SPA fallback are on the root app. Supporting modules:
 - **`route_service.py`** — Razorpay Route: onboards each seller as a Linked Account
   (sub-merchant). Falls back to a **mock linked account** when Route isn't enabled on
   the platform key, so onboarding works end-to-end regardless.
-- **`storage.py`** — image uploads to the local filesystem (`backend/uploads/`), served
-  back through `GET /api/files/{path}`. Note: internal names still say "marketo".
+- **`storage.py`** — image uploads. Bytes go in the **`media` table**, not the
+  container filesystem: Railway rebuilds that on every deploy and `uploads` is in
+  `.dockerignore`, so photos written to disk were gone by the next release. Reads
+  fall back to disk so anything already written there still serves. Served through
+  `GET /api/files/{path}`, immutable for a year with an ETag derived from the path
+  (every stored name ends in a fresh uuid, so the bytes never change). Note:
+  internal names still say "marketo".
 - **`ai_service.py`** — AI-written product descriptions for the seller's product
   editor. Talks to any **OpenAI-compatible** chat-completions endpoint via the
   `openai` SDK; defaults to `deepseek-ai/deepseek-v4-flash-0731` on NVIDIA NIM
@@ -165,9 +170,43 @@ SPA fallback are on the root app. Supporting modules:
 - **Live Razorpay platform keys and a Brevo API key are hardcoded as fallbacks** in
   `server.py`, `route_service.py`, and `email_service.py` (env vars override them).
   Treat these as real secrets; don't echo them into logs, commits, or new files.
-- `COMMISSION_RATE_FREE` and `COMMISSION_RATE_PRO` in `server.py` are **both 0.10**
-  right now, but `/api/subscription` reports `commissionRate: 0.00` for active subs.
-  UI copy about "0% commission for Pro" is aspirational, not what the checkout math does.
+- `COMMISSION_RATE_FREE` and `COMMISSION_RATE_PRO` in `server.py` are **both 0.10**;
+  Pro buys an ad-free storefront and a badge, not a lower rate, and the marketing copy
+  says so. `/api/subscription` used to hardcode `0.00` for active subs while checkout
+  took 10% — two endpoints quoting different rates, neither matching the money. Both
+  now read those constants; a test buys something and compares the quoted rate against
+  the split actually sent to Razorpay. Keep it that way.
+- **There is one way a seller gets paid: the bank-details form.** It creates a
+  Razorpay Route linked account that `checkout()` attaches its `transfers` block to.
+  A second path once existed — sellers could POST their own Razorpay key and secret
+  to `/api/seller/razorpay`, which stored the secret, reported `razorpayConnected`,
+  and was read by no checkout at all. Removed, along with the `seller_gateways`
+  table (dropped on boot via `db._DROPPED_TABLES`). Don't reintroduce a payment
+  credential store nothing spends.
+- **Never take an online payment that cannot be forwarded.** Checkout used to retry
+  without the transfer when Razorpay rejected it, so the buyer paid, the order
+  completed, and the whole amount stayed in the platform account with the seller
+  unpaid and only a log warning. Both that case and "seller has no linked account"
+  now refuse the payment; COD is unaffected. `_payouts_live()` is the single gate,
+  keyed off the Route product's settlement state — the linked account sits at
+  `created` long after transfers work, so account status is not the signal.
+- **Onboarding is resumable on purpose.** Razorpay enforces a unique `reference_id`
+  per linked account, so if step 1 lands and step 2 or 3 fails, re-creating locks the
+  seller out for ever. `RouteError` carries the `account_id` and the row is saved on
+  the failure path. Razorpay's own 4xx is returned to the seller as a 400 — a 5xx gets
+  replaced by Cloudflare's error page and they never see the reason.
+- **Stock is taken at checkout and must be given back.** Nothing released it until
+  `release_abandoned_checkouts()` existed, so every closed payment window permanently
+  removed a unit from the shop. A late payment re-reserves rather than losing the sale.
+- **Emails follow the money, not the form.** `_notify_new_order` fires at placement
+  for COD and at payment for online. `_mark_order_paid` is the single paid transition
+  for both the browser callback and the webhook, compare-and-swapped on `paid_at` so
+  only one of them sends the receipt. Buyer links are `/order/<id>?email=...` (public);
+  `/orders/<id>` is the seller console and needs a login.
+- **AI is off unless switched on.** `AI_ENABLED` for the description writer,
+  `AI_ASSISTANT_ENABLED` as well for the shop assistant. A key in the environment is
+  not consent. The assistant proposes; it never writes — `/api/ai/assistant/apply`
+  re-checks ownership and bounds server-side.
 - The repo has an Emergent test-agent protocol block at the top of `test_result.md`
   ("DO NOT EDIT OR REMOVE") — historical, from the platform this was built on.
 - `.emergent/`, `metadata.json`, `firebase-applet-config.json`, `assets/.aistudio/`
