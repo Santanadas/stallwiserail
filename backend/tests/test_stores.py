@@ -13,7 +13,6 @@ def test_create_store_and_fetch_it(make_seller):
     mine = s.get("/api/stores/me").json()
     assert mine["name"] == "Clay Co"
     assert mine["routeConnected"] is False
-    assert mine["razorpayConnected"] is False
 
 
 def test_invalid_slugs_are_rejected(make_seller):

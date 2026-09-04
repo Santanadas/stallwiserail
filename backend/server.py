@@ -158,12 +158,6 @@ class RouteOnboardIn(BaseModel):
     ifsc: str = Field(default="", max_length=11)
 
 
-class RazorpayIn(BaseModel):
-    key_id: str = Field(min_length=5, max_length=100)
-    key_secret: str = Field(min_length=8, max_length=150)
-    webhook_secret: Optional[str] = Field(default=None, max_length=150)
-
-
 class OptionIn(BaseModel):
     label: str = Field(min_length=1, max_length=100)
     priceDelta: float = Field(default=0.0, ge=-1000000.0, le=1000000.0)
@@ -747,8 +741,11 @@ async def my_store(user=Depends(get_current_user)):
     store = await get_my_store(user)
     if not store:
         return None
-    rp = await db.fetch_one("SELECT key_id FROM seller_gateways WHERE seller_id = $1", user["user_id"])
-    store["razorpayConnected"] = bool(rp)
+    # There is one way a seller gets paid: the linked payout account created
+    # from their bank details. A seller's own gateway keys used to be storable
+    # here and reported as "connected", but no checkout ever read them — the
+    # money went through the platform account regardless. Removed, along with
+    # the live API secrets it kept at rest for nothing.
     route = await db.fetch_one("SELECT * FROM seller_routes WHERE seller_id = $1", user["user_id"])
     store["routeConnected"] = bool(route)
     store["routeStatus"] = route.get("status") if route else None
@@ -1151,39 +1148,6 @@ async def refresh_route(user=Depends(get_current_user)):
 @api.delete("/seller/route")
 async def disconnect_route(user=Depends(get_current_user)):
     await db.execute("DELETE FROM seller_routes WHERE seller_id = $1", user["user_id"])
-    return {"connected": False}
-
-
-# ======================= Seller gateway =======================
-@api.post("/seller/razorpay")
-async def connect_razorpay(body: RazorpayIn, user=Depends(get_current_user)):
-    key_secret_enc = security.encrypt_secret(body.key_secret)
-    webhook_secret_enc = security.encrypt_secret(body.webhook_secret) if body.webhook_secret else None
-    await db.execute(
-        """
-        INSERT INTO seller_gateways (seller_id, key_id, key_secret_enc, webhook_secret_enc, enabled, created_at)
-        VALUES ($1, $2, $3, $4, TRUE, $5)
-        ON CONFLICT (seller_id) DO UPDATE SET
-            key_id = EXCLUDED.key_id, key_secret_enc = EXCLUDED.key_secret_enc,
-            webhook_secret_enc = EXCLUDED.webhook_secret_enc, enabled = TRUE
-        """,
-        user["user_id"], body.key_id, key_secret_enc, webhook_secret_enc, iso(now())
-    )
-    return {"connected": True, "key_id_last4": body.key_id[-4:]}
-
-
-@api.get("/seller/razorpay")
-async def get_razorpay(user=Depends(get_current_user)):
-    rp = await db.fetch_one("SELECT * FROM seller_gateways WHERE seller_id = $1", user["user_id"])
-    if not rp:
-        return {"connected": False}
-    return {"connected": True, "key_id_last4": rp["key_id"][-4:],
-            "webhookConfigured": bool(rp.get("webhook_secret_enc"))}
-
-
-@api.delete("/seller/razorpay")
-async def disconnect_razorpay(user=Depends(get_current_user)):
-    await db.execute("DELETE FROM seller_gateways WHERE seller_id = $1", user["user_id"])
     return {"connected": False}
 
 

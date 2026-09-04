@@ -275,15 +275,6 @@ def _init_sqlite_schema(conn: sqlite3.Connection):
         updated_at TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS seller_gateways (
-        seller_id TEXT PRIMARY KEY,
-        key_id TEXT NOT NULL,
-        key_secret_enc TEXT NOT NULL,
-        webhook_secret_enc TEXT,
-        enabled BOOLEAN DEFAULT 1,
-        created_at TEXT NOT NULL
-    );
-
     CREATE TABLE IF NOT EXISTS platform_plans (
         interval TEXT PRIMARY KEY,
         amount NUMERIC NOT NULL,
@@ -459,15 +450,6 @@ CREATE TABLE IF NOT EXISTS seller_routes (
     product_config_id TEXT,
     settlement_status TEXT,
     updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS seller_gateways (
-    seller_id TEXT PRIMARY KEY,
-    key_id TEXT NOT NULL,
-    key_secret_enc TEXT NOT NULL,
-    webhook_secret_enc TEXT,
-    enabled BOOLEAN DEFAULT TRUE,
-    created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS platform_plans (

@@ -177,3 +177,47 @@ def test_a_pro_seller_is_quoted_the_pro_rate(seller_with_store, monkeypatch):
 
 async def _immediately(value):
     return value
+
+
+# --- One way to get paid, not two ----------------------------------------
+def test_a_seller_can_no_longer_hand_us_their_own_gateway_keys(seller_with_store):
+    """These stored a seller's live Razorpay key and secret, reported
+    "connected", and were read by no checkout — the money went through the
+    platform account regardless. Live credentials kept at rest for nothing."""
+    gone = [
+        seller_with_store.post("/api/seller/razorpay",
+                               json={"key_id": "rzp_live_xxx", "key_secret": "supersecret"}),
+        seller_with_store.get("/api/seller/razorpay"),
+        seller_with_store.delete("/api/seller/razorpay"),
+    ]
+    for r in gone:
+        assert r.status_code in (404, 405), r.status_code
+
+
+def test_the_bank_details_form_is_the_way_a_seller_gets_paid(
+        seller_without_payouts, monkeypatch):
+    def _create(payload, existing_account_id=None):
+        return {"mode": "razorpay", "account_id": "acc_ONLYWAY", "status": "created",
+                "product_config_id": "pcfg_1", "settlement_status": "activated"}
+
+    monkeypatch.setattr(route_service, "create_linked_account", _create)
+    seller = seller_without_payouts
+    assert seller.get("/api/seller/route").json() == {"connected": False}
+
+    r = seller.post("/api/seller/route/onboard", json={
+        "legal_business_name": "Priya Handicrafts",
+        "contact_name": "Priya Sharma",
+        "phone": "9876543210",
+        "beneficiary_name": "Priya Sharma",
+        "account_number": "123456789012",
+        "ifsc": "HDFC0001234",
+    })
+    assert r.status_code == 200
+    assert r.json()["payoutsLive"] is True
+    assert seller.get("/api/dashboard/summary").json()["queue"]["bankReady"] is True
+
+
+def test_the_store_no_longer_advertises_a_connection_that_did_nothing(seller_with_store):
+    store = seller_with_store.get("/api/stores/me").json()
+    assert "razorpayConnected" not in store
+    assert store["routeConnected"] is True
