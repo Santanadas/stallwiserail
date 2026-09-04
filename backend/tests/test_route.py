@@ -73,14 +73,28 @@ def test_invalid_bank_details_rejected_before_hitting_razorpay(
     assert fake_route == [], "must not call Razorpay with invalid details"
 
 
-def test_route_error_surfaces_as_502(seller_with_store, monkeypatch):
+def test_route_not_enabled_is_not_blamed_on_the_seller(seller_with_store, monkeypatch):
+    """Razorpay says "Route feature not enabled for the merchant" when it is the
+    *platform's* account that cannot do Route. Repeating that at a seller who
+    just typed their bank details reads as an accusation about them."""
     def _boom(payload, existing_account_id=None):
-        raise route_service.RouteError("Route is not enabled on this account.")
+        raise route_service.RouteError("Route feature not enabled for the merchant",
+                                       upstream_status=400)
     monkeypatch.setattr(route_service, "create_linked_account", _boom)
 
     r = _onboard(seller_with_store)
-    assert r.status_code == 502
-    assert "not enabled" in r.json()["detail"].lower()
+    assert r.status_code == 503
+    detail = r.json()["detail"]
+    assert "on us, not your details" in detail
+    assert "merchant" not in detail.lower(), "do not repeat Razorpay's wording at the seller"
+    assert "cash on delivery" in detail, "tell them what they can still do"
+
+
+def test_a_gateway_failure_is_still_a_502(seller_with_store, monkeypatch):
+    def _boom(payload, existing_account_id=None):
+        raise route_service.RouteError("Could not reach the payment gateway.")
+    monkeypatch.setattr(route_service, "create_linked_account", _boom)
+    assert _onboard(seller_with_store).status_code == 502
 
 
 def test_get_and_disconnect_route(seller_without_payouts, fake_route):
@@ -270,10 +284,11 @@ def test_a_resumed_attempt_can_finish(seller_without_payouts, monkeypatch):
 def test_a_failure_before_any_account_exists_saves_nothing(
         seller_without_payouts, monkeypatch):
     def _boom(payload, existing_account_id=None):
-        raise route_service.RouteError("Route is not enabled on this account.")
+        raise route_service.RouteError("Razorpay rejected the account details.",
+                                       upstream_status=400)
 
     monkeypatch.setattr(route_service, "create_linked_account", _boom)
-    assert _onboard(seller_without_payouts).status_code == 502
+    assert _onboard(seller_without_payouts).status_code == 400
     assert seller_without_payouts.get("/api/seller/route").json() == {"connected": False}
 
 
@@ -305,3 +320,47 @@ def test_a_razorpay_5xx_is_not_blamed_on_the_seller(seller_without_payouts, monk
 
     monkeypatch.setattr(route_service, "create_linked_account", _their_fault)
     assert _onboard(seller_without_payouts).status_code == 502
+
+
+def test_a_platform_outage_shows_up_on_health(app_client, seller_with_store, monkeypatch):
+    """The operator has to be able to see this without reading logs — it stops
+    every seller onboarding and every online sale at once."""
+    def _boom(payload, existing_account_id=None):
+        raise route_service.RouteError("Route feature not enabled for the merchant",
+                                       upstream_status=400)
+    monkeypatch.setattr(route_service, "create_linked_account", _boom)
+    import server
+    monkeypatch.setattr(server, "_payout_outage", None)
+
+    assert "payouts" not in app_client.get("/health").json()
+    _onboard(seller_with_store)
+
+    health = app_client.get("/health").json()
+    # Not "ok" any more. The exact word depends on what else is wrong — an
+    # insecure DEV_OTP_ECHO outranks a degraded one — but it must not read
+    # healthy while no shop on the site can take a payment.
+    assert health["status"] != "ok"
+    assert health["payouts"]["working"] is False
+    assert "Enable Route in the Razorpay dashboard" in health["payouts"]["detail"]
+    assert health["payouts"]["razorpaySaid"] == "Route feature not enabled for the merchant"
+
+
+@pytest.mark.parametrize("message", [
+    "Route feature not enabled for the merchant",
+    "Route is not enabled on this account.",
+    "The api key/secret provided is invalid: authentication failed",
+    "This feature is not available for your account",
+])
+def test_platform_level_failures_are_recognised(message):
+    assert route_service.RouteError(message, upstream_status=400).is_platform_fault
+
+
+@pytest.mark.parametrize("message", [
+    "The IFSC code is invalid.",
+    "beneficiary_name is required",
+    "account_number must be numeric",
+])
+def test_a_sellers_own_mistake_is_still_theirs(message):
+    e = route_service.RouteError(message, upstream_status=400)
+    assert not e.is_platform_fault
+    assert e.is_sellers_to_fix

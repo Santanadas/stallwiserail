@@ -1030,6 +1030,17 @@ def _route_public(route: dict) -> dict:
     }
 
 
+# The last time Razorpay told us Route is not available to this platform
+# account. Kept in memory only — it is a "look at your Razorpay dashboard now"
+# signal for /health, not a record worth a table.
+_payout_outage: Optional[dict] = None
+
+
+def _record_payout_outage(reason: str) -> None:
+    global _payout_outage
+    _payout_outage = {"reason": reason, "at": iso(now())}
+
+
 async def _save_route(user, store, account_id, legal, contact, phone, beneficiary,
                       account_enc, bank_last4, ifsc, *, status, product_config_id,
                       settlement_status):
@@ -1102,6 +1113,22 @@ async def route_onboard(body: RouteOnboardIn, user=Depends(get_current_user)):
                               status=e.status or "created",
                               product_config_id=e.product_config_id,
                               settlement_status=e.settlement_status or "pending")
+        if e.is_platform_fault:
+            # Route is not switched on for the platform's own Razorpay account.
+            # Nothing the seller typed is wrong, and repeating Razorpay's words
+            # at them ("Route feature not enabled for the merchant") reads as an
+            # accusation about their bank details. Say what is true instead, and
+            # make it impossible for us to miss.
+            _record_payout_outage(str(e))
+            logger.critical(
+                "RAZORPAY ROUTE IS NOT ENABLED ON THE PLATFORM ACCOUNT — no seller "
+                "can onboard for payouts and no shop can take online payments. "
+                "Razorpay said: %s", e)
+            raise HTTPException(
+                status_code=503,
+                detail="Bank payouts aren't switched on for Stall Wise yet — this is "
+                       "on us, not your details. Your shop can still take cash on "
+                       "delivery, and we'll email you the moment it's sorted.")
         # Razorpay saying the details are wrong is the seller's to fix and must
         # reach them as a plain 400 — a 5xx here gets turned into a gateway
         # error page by the proxy in front of us, so the seller sees "the origin
@@ -2668,6 +2695,16 @@ async def health_check():
         out["missingConfig"] = missing
     # The AI features are optional, so a missing key is not "degraded" — but it
     # is the only way to tell from Railway whether the key actually landed.
+    if _payout_outage:
+        out["status"] = "degraded"
+        out["payouts"] = {
+            "working": False,
+            "detail": "Razorpay Route is not enabled on the platform account, so no "
+                      "seller can be onboarded for payouts and no shop can take "
+                      "online payments. Enable Route in the Razorpay dashboard.",
+            "razorpaySaid": _payout_outage["reason"],
+            "since": _payout_outage["at"],
+        }
     out["ai"] = {"enabled": ai_service.enabled(),
                  "assistant": ai_assistant.enabled(),
                  "hasKey": bool(ai_service._API_KEY),

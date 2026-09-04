@@ -52,8 +52,24 @@ class RouteError(Exception):
         # is the seller's to fix, the other is ours.
         self.upstream_status = upstream_status
 
+    # Razorpay says these when the *platform* account cannot do Route at all —
+    # the feature is not enabled on it, or the keys are not authorised. Nothing
+    # the seller typed is wrong, and telling them "Route feature not enabled for
+    # the merchant" reads as an accusation about their own bank details.
+    _PLATFORM_FAULT = (
+        "not enabled", "not activated", "feature is not", "not available for",
+        "unauthorized", "unauthorised", "authentication",
+    )
+
+    @property
+    def is_platform_fault(self) -> bool:
+        text = str(self).lower()
+        return any(p in text for p in self._PLATFORM_FAULT)
+
     @property
     def is_sellers_to_fix(self) -> bool:
+        if self.is_platform_fault:
+            return False
         return self.upstream_status is not None and 400 <= self.upstream_status < 500
 
 
