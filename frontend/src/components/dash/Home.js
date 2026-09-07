@@ -78,7 +78,7 @@ export default function HomeSection({ summary, loading, error, onRetry, orders, 
     );
   }
 
-  const { queue, metrics, money, daily, topProducts, health } = summary;
+  const { queue, metrics, money, daily, topProducts, health, verification } = summary;
   const tasks = [];
 
   if (queue.toShip > 0) {
@@ -143,7 +143,16 @@ export default function HomeSection({ summary, loading, error, onRetry, orders, 
     ? Math.round(((metrics.ordersThisMonth - metrics.ordersLastMonth) / metrics.ordersLastMonth) * 100)
     : null;
 
+  // The badge is earned, so show the distance rather than a bare tick — a
+  // checklist row that can only be crossed off after 50 finished orders is
+  // discouraging without the count beside it.
+  const done = verification?.completedOrders ?? 0;
+  const needed = verification?.required ?? 50;
   const healthItems = [
+    [verification?.verified
+      ? "Verified seller badge earned"
+      : `Verified badge — ${done} of ${needed} completed orders`,
+     Boolean(verification?.verified)],
     ["Bank account verified", health.bankVerified],
     ["Shop description written", health.hasBio],
     ["At least one product listed", health.hasProducts],

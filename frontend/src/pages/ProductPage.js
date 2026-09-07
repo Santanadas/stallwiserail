@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { ShoppingBag, Package, ChevronRight, Store, ArrowLeft, Check } from "lucide-react";
+import { ShoppingBag, Package, ChevronRight, Store, ArrowLeft, Check, ShieldCheck } from "lucide-react";
 import api, { formatApiError } from "@/lib/api";
 import { fileUrl } from "@/components/ImageUpload";
 import CartDrawer from "@/components/CartDrawer";
@@ -239,7 +239,20 @@ export default function ProductPage() {
               </div>
               <div className="min-w-0">
                 <span className="text-[11px] font-bold uppercase tracking-widest text-[#525252]">Sold by</span>
-                <p className="truncate font-bold">{store?.name}</p>
+                <div className="flex items-center gap-2">
+                  <p className="truncate font-bold">{store?.name}</p>
+                  {/* Same badge as the shop page: 50 completed orders, earned. */}
+                  {data?.verified && (
+                    <span
+                      data-testid="verified-badge"
+                      title="This seller has completed 50 or more orders without a dispute."
+                      className="inline-flex shrink-0 items-center gap-1 border border-[#0A0A0A] bg-[#0A0A0A] px-1.5 py-0.5 text-[9px] font-black uppercase tracking-widest text-white"
+                    >
+                      <ShieldCheck className="h-3 w-3 text-[#FF4F00]" />
+                      Verified
+                    </span>
+                  )}
+                </div>
               </div>
               <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-[#525252]" />
             </Link>

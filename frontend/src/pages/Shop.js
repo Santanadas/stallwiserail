@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ShoppingBag, Store, ArrowRight, Package, Share2, Check } from "lucide-react";
+import { ShoppingBag, Store, ArrowRight, Package, Share2, Check, ShieldCheck } from "lucide-react";
 import api, { formatApiError } from "@/lib/api";
 import { fileUrl } from "@/components/ImageUpload";
 import CartDrawer from "@/components/CartDrawer";
@@ -202,6 +202,19 @@ export default function Shop() {
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-3">
                 <h1 data-testid="shop-name" className="mk-head text-3xl font-black leading-tight tracking-tighter sm:text-4xl md:text-5xl">{shop.store?.name || "Shop"}</h1>
+                {/* Earned at 50 completed orders, never bought — see
+                    VERIFIED_AFTER_ORDERS in server.py. The title carries the
+                    meaning so the badge is never just a mysterious tick. */}
+                {shop.verified && (
+                  <span
+                    data-testid="verified-badge"
+                    title="This seller has completed 50 or more orders without a dispute."
+                    className="inline-flex items-center gap-1.5 border-2 border-[#0A0A0A] bg-[#0A0A0A] px-2 py-1 text-[10px] font-black uppercase tracking-widest text-white"
+                  >
+                    <ShieldCheck className="h-3.5 w-3.5 text-[#FF4F00]" />
+                    Verified
+                  </span>
+                )}
               </div>
               <p className="mt-1 text-xs font-medium text-[#525252] sm:text-sm">
                 stallwise.in/<span className="font-bold text-[#0A0A0A]">{shop.store?.slug || storeSlug}</span>

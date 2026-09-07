@@ -816,10 +816,14 @@ async def public_shop(slug: str):
     rows = await db.fetch_all("SELECT * FROM products WHERE store_slug = $1 AND active = TRUE ORDER BY created_at DESC", slug.lower().strip())
     products = [public_product(r) for r in rows]
     sub_status = await effective_sub_status(seller) if seller else "inactive"
+    completed = await _completed_order_count(store["seller_id"])
     route = await db.fetch_one(
         "SELECT account_id, mode, status, settlement_status FROM seller_routes WHERE seller_id = $1",
         store["seller_id"])
     return {
+        # Earned, never bought. The exact count is deliberately not published —
+        # this is a stranger's trust signal, not the seller's turnover.
+        "verified": completed >= VERIFIED_AFTER_ORDERS,
         # Checkout refuses an online payment this shop cannot be paid for, so a
         # buyer must not be offered it in the first place — being told "no"
         # after filling in a delivery address is worse than never seeing it.
@@ -865,10 +869,14 @@ async def public_product_detail(slug: str, product_slug: str):
         s, row["product_id"],
     )
     sub_status = await effective_sub_status(seller) if seller else "inactive"
+    completed = await _completed_order_count(store["seller_id"])
     route = await db.fetch_one(
         "SELECT account_id, mode, status, settlement_status FROM seller_routes WHERE seller_id = $1",
         store["seller_id"])
     return {
+        # Earned, never bought. The exact count is deliberately not published —
+        # this is a stranger's trust signal, not the seller's turnover.
+        "verified": completed >= VERIFIED_AFTER_ORDERS,
         # Checkout refuses an online payment this shop cannot be paid for, so a
         # buyer must not be offered it in the first place — being told "no"
         # after filling in a delivery address is worse than never seeing it.
@@ -995,6 +1003,20 @@ async def serve_file(path: str, request: Request):
 # The linked account itself often sits at "created" long after transfers work,
 # so it is the Route product configuration that decides this, not the account.
 _SETTLEMENT_LIVE = {"activated", "configured", "mock"}
+
+
+# How many orders a seller has to carry all the way through before their shop
+# is marked verified. "Completed" is the bar rather than "delivered": an order
+# only reaches it once the buyer's acceptance window has closed without a
+# dispute, so it means the sale actually went fine — which is the whole claim
+# the badge makes to a stranger.
+VERIFIED_AFTER_ORDERS = 50
+
+
+async def _completed_order_count(seller_id: str) -> int:
+    return int(await db.fetch_val(
+        "SELECT COUNT(*) FROM orders WHERE seller_id = $1 AND status = 'completed'",
+        seller_id) or 0)
 
 
 def _payouts_live(route: Optional[dict]) -> bool:
@@ -1420,6 +1442,9 @@ async def dashboard_summary(request: Request, user=Depends(get_current_user)):
     # "Bank account verified" the moment they submitted the form, while their
     # shop still could not take an online payment.
     bank_ready = _payouts_live(route)
+    # Counted straight from the table, not from the 2000-order window above —
+    # a seller past that window would otherwise watch the badge drift away.
+    completed_total = await _completed_order_count(user["user_id"])
 
     return {
         "generatedAt": iso(now_dt),
@@ -1484,6 +1509,14 @@ async def dashboard_summary(request: Request, user=Depends(get_current_user)):
             "byStatus": {st: sum(1 for o in orders if o["status"] == st)
                          for st in ("placed", "paid", "shipped", "delivered",
                                     "completed", "disputed", "abandoned")},
+        },
+        # Progress toward the badge, so a seller can see it coming rather than
+        # discovering it. The count is their own, so unlike the public view it
+        # is safe to show them the number.
+        "verification": {
+            "completedOrders": completed_total,
+            "required": VERIFIED_AFTER_ORDERS,
+            "verified": completed_total >= VERIFIED_AFTER_ORDERS,
         },
         "health": {
             "bankVerified": bank_ready,
