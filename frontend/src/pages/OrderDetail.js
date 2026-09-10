@@ -110,6 +110,7 @@ export default function OrderDetail() {
                           {" "}({Object.entries(i.optionSelections).map(([k, v]) => `${k}: ${v}`).join(", ")})
                         </span>
                       ) : null}
+                      {i.sku ? <span className="ml-2 font-mono text-xs text-[#525252]">SKU {i.sku}</span> : null}
                     </span>
                     <span className="font-bold">₹{i.unitPrice}</span>
                   </li>

@@ -147,7 +147,11 @@ def build_head(*, title: str, description: str, canonical: str,
         parts.append(f'<meta property="og:image" content="{_esc(img)}" />')
         parts.append(f'<meta name="twitter:image" content="{_esc(img)}" />')
     if jsonld:
-        parts.append(f'<script type="application/ld+json">{jsonld}</script>')
+        # json.dumps leaves "<" alone, so a product titled "</script><script>…"
+        # closed this tag and ran as page script. The \u escapes are still valid
+        # JSON and parse back to the same characters.
+        safe = jsonld.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+        parts.append(f'<script type="application/ld+json">{safe}</script>')
     return "\n    ".join(parts)
 
 
@@ -227,6 +231,14 @@ def store_meta(store: dict, seller: dict, products: list) -> dict:
     }
 
 
+_SCHEMA_CONDITIONS = {
+    "new": "https://schema.org/NewCondition",
+    "used_like_new": "https://schema.org/UsedCondition",
+    "used_good": "https://schema.org/UsedCondition",
+    "refurbished": "https://schema.org/RefurbishedCondition",
+}
+
+
 def product_jsonld(store: dict, seller: dict, product: dict) -> str:
     """Product + Offer + BreadcrumbList — what a long-tail product query needs
     to earn a rich result."""
@@ -245,7 +257,7 @@ def product_jsonld(store: dict, seller: dict, product: dict) -> str:
         "name": product.get("title"),
         "description": _clamp(product.get("description") or product.get("title"), 500),
         "url": url,
-        "brand": {"@type": "Brand", "name": store.get("name")},
+        "brand": {"@type": "Brand", "name": product.get("brand") or store.get("name")},
         "offers": {
             "@type": "Offer",
             "url": url,
@@ -259,6 +271,25 @@ def product_jsonld(store: dict, seller: dict, product: dict) -> str:
     }
     if images:
         product_node["image"] = images
+    condition = _SCHEMA_CONDITIONS.get(product.get("condition") or "new")
+    if condition:
+        product_node["offers"]["itemCondition"] = condition
+    mrp = float(product.get("mrp") or 0)
+    if mrp > float(product.get("price") or 0):
+        # The list price the offer is cut from — what search shows struck through.
+        product_node["offers"]["priceSpecification"] = {
+            "@type": "UnitPriceSpecification",
+            "priceType": "https://schema.org/ListPrice",
+            "price": f"{mrp:.2f}",
+            "priceCurrency": "INR",
+        }
+    if product.get("countryOfOrigin"):
+        product_node["countryOfOrigin"] = {"@type": "Country", "name": product["countryOfOrigin"]}
+    specs = [s for s in (product.get("specs") or []) if s.get("name") and s.get("value")]
+    if specs:
+        product_node["additionalProperty"] = [
+            {"@type": "PropertyValue", "name": s["name"], "value": s["value"]} for s in specs[:20]
+        ]
 
     breadcrumbs = {
         "@context": "https://schema.org",

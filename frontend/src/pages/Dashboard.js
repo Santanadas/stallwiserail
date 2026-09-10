@@ -931,6 +931,7 @@ function ProductsSection({
               {/* Product Info */}
               <div className="p-3.5">
                 <h4 className="text-xs sm:text-sm font-bold text-[#0A0A0A] line-clamp-1">{p.title}</h4>
+                {p.sku && <p className="mt-0.5 font-mono text-[10px] text-neutral-400 line-clamp-1">SKU {p.sku}</p>}
                 {p.description && (
                   <p className="mt-0.5 text-xs text-neutral-400 line-clamp-1">{p.description}</p>
                 )}
@@ -983,6 +984,7 @@ function ProductsSection({
                         </div>
                         <div>
                           <span className="font-bold text-[#0A0A0A] block">{p.title}</span>
+                          {p.sku && <span className="block font-mono text-[10px] text-neutral-400">SKU {p.sku}</span>}
                           {p.description && (
                             <p className="text-xs text-neutral-400 line-clamp-1 max-w-xs">{p.description}</p>
                           )}

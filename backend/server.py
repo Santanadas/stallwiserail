@@ -43,6 +43,14 @@ COMMISSION_RATE_PRO = 0.10
 # "cod"    = cash collected by the seller on delivery.
 PAYMENT_METHODS = ("online", "cod")
 
+# Mirrors CATEGORIES in frontend/src/lib/productMeta.js — the labels and the
+# suggested specifications live there; the server only needs the ids.
+PRODUCT_CATEGORIES = (
+    "fashion", "footwear", "jewellery", "beauty", "food", "home", "electronics",
+    "handmade", "books", "toys", "health", "art", "other",
+)
+PRODUCT_CONDITIONS = ("new", "used_like_new", "used_good", "refurbished")
+
 # A product at or below this many units shows up in the dashboard action queue.
 LOW_STOCK_THRESHOLD = 3
 DEFAULT_WINDOW_MIN = 120
@@ -169,6 +177,13 @@ class OptionGroupIn(BaseModel):
     options: List[OptionIn] = Field(min_length=1, max_length=50)
 
 
+class SpecIn(BaseModel):
+    # Blank rows are allowed through and dropped on save — the editor keeps an
+    # empty row open for the seller to type into.
+    name: str = Field(default="", max_length=40)
+    value: str = Field(default="", max_length=200)
+
+
 class ProductIn(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     description: str = Field(default="", max_length=2000)
@@ -179,6 +194,17 @@ class ProductIn(BaseModel):
     image: Optional[str] = Field(default=None, max_length=500)
     images: List[str] = Field(default_factory=list, max_length=8)
     paymentMethods: List[str] = Field(default_factory=lambda: ["online"], max_length=4)
+    # Catalogue details. All optional: a seller with a phone photo and a price
+    # can still list in under a minute.
+    mrp: Optional[float] = Field(default=None, ge=0, le=10000000.0)
+    sku: str = Field(default="", max_length=64)
+    category: str = Field(default="", max_length=40)
+    brand: str = Field(default="", max_length=80)
+    condition: str = Field(default="new", max_length=20)
+    highlights: List[str] = Field(default_factory=list, max_length=6)
+    specs: List[SpecIn] = Field(default_factory=list, max_length=20)
+    countryOfOrigin: str = Field(default="", max_length=60)
+    manufacturer: str = Field(default="", max_length=500)
 
 
 class AIDescribeIn(BaseModel):
@@ -327,7 +353,10 @@ def public_store(s: Optional[dict]) -> Optional[dict]:
     }
 
 
-def public_product(p: Optional[dict]) -> Optional[dict]:
+def public_product(p: Optional[dict], owner: bool = False) -> Optional[dict]:
+    """A product as the API returns it. `owner` adds the fields only the seller
+    should see — the SKU is their stock-keeping code, not something a buyer or a
+    search engine has any use for."""
     if not p:
         return None
     opts = p.get("option_groups") if "option_groups" in p else p.get("optionGroups", [])
@@ -351,7 +380,16 @@ def public_product(p: Optional[dict]) -> Optional[dict]:
         except Exception:
             pays = None
     pays = [m for m in (pays or []) if m in PAYMENT_METHODS] or ["online"]
-    return {
+    details = p.get("details")
+    if isinstance(details, str):
+        try:
+            details = json.loads(details)
+        except Exception:
+            details = None
+    if not isinstance(details, dict):
+        details = {}
+    mrp = p.get("mrp")
+    out = {
         "product_id": p["product_id"],
         "sellerId": p.get("seller_id") or p.get("sellerId"),
         "storeSlug": p.get("store_slug") or p.get("storeSlug"),
@@ -365,8 +403,20 @@ def public_product(p: Optional[dict]) -> Optional[dict]:
         "images": imgs or [],
         "paymentMethods": pays,
         "slug": p.get("slug"),
+        "mrp": float(mrp) if mrp is not None else None,
+        "category": p.get("category") if p.get("category") in PRODUCT_CATEGORIES else "",
+        "brand": details.get("brand") or "",
+        "condition": details.get("condition") if details.get("condition") in PRODUCT_CONDITIONS else "new",
+        "highlights": [h for h in (details.get("highlights") or []) if isinstance(h, str) and h],
+        "specs": [s for s in (details.get("specs") or [])
+                  if isinstance(s, dict) and s.get("name") and s.get("value")],
+        "countryOfOrigin": details.get("countryOfOrigin") or "",
+        "manufacturer": details.get("manufacturer") or "",
         "created_at": p["created_at"],
     }
+    if owner:
+        out["sku"] = p.get("sku") or ""
+    return out
 
 
 def public_order(o: Optional[dict], for_buyer: bool = False) -> Optional[dict]:
@@ -1359,6 +1409,50 @@ def _clean_payment_methods(body: "ProductIn") -> List[str]:
     return out or ["online"]
 
 
+def _clean_product_details(body: "ProductIn") -> tuple:
+    """The catalogue fields beyond title and price → (mrp, sku, category, details).
+
+    Everything here is optional. The one hard rule is the law's: MRP is the
+    most a buyer may be charged, so a selling price above it is refused rather
+    than shown to buyers as a negative discount. Unknown categories and
+    conditions are dropped the same way unknown payment methods are.
+    """
+    mrp = round(float(body.mrp), 2) if body.mrp else None
+    if mrp is not None and mrp < body.price:
+        raise HTTPException(
+            status_code=400,
+            detail="MRP can't be lower than your selling price — nothing can be sold above its MRP.")
+
+    category = (body.category or "").strip().lower()
+    if category not in PRODUCT_CATEGORIES:
+        category = ""
+    condition = (body.condition or "").strip().lower()
+    if condition not in PRODUCT_CONDITIONS:
+        condition = "new"
+
+    highlights = [h for h in (security.sanitize_text(x or "", 200) for x in body.highlights) if h]
+
+    specs, seen = [], set()
+    for s in body.specs:
+        name = security.sanitize_text(s.name or "", 40)
+        value = security.sanitize_text(s.value or "", 200)
+        # Two "Fabric" rows would render as a contradiction; the first one wins.
+        if not name or not value or name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        specs.append({"name": name, "value": value})
+
+    details = {
+        "brand": security.sanitize_text(body.brand or "", 80),
+        "condition": condition,
+        "highlights": highlights,
+        "specs": specs,
+        "countryOfOrigin": security.sanitize_text(body.countryOfOrigin or "", 60),
+        "manufacturer": security.sanitize_text(body.manufacturer or "", 500),
+    }
+    return mrp, security.sanitize_text(body.sku or "", 64), category, details
+
+
 @api.post("/products")
 async def create_product(body: ProductIn, user=Depends(get_current_user)):
     store = await get_my_store(user)
@@ -1368,6 +1462,7 @@ async def create_product(body: ProductIn, user=Depends(get_current_user)):
     images = _clean_product_images(body)
     primary = images[0] if images else None
     pay_methods = _clean_payment_methods(body)
+    mrp, sku, category, details = _clean_product_details(body)
     prod_id = new_id("prod")
     title = security.sanitize_text(body.title, 200)
     desc = security.sanitize_text(body.description, 2000)
@@ -1377,25 +1472,21 @@ async def create_product(body: ProductIn, user=Depends(get_current_user)):
 
     await db.execute(
         """
-        INSERT INTO products (product_id, seller_id, store_slug, title, description, price, stock, option_groups, active, image, images, payment_methods, slug, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        INSERT INTO products (product_id, seller_id, store_slug, title, description, price, stock, option_groups, active, image, images, payment_methods, slug, mrp, sku, category, details, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
         """,
         prod_id, user["user_id"], store["slug"], title, desc, body.price, body.stock,
-        option_groups_json, body.active, primary, images, pay_methods, prod_slug, created_at
+        option_groups_json, body.active, primary, images, pay_methods, prod_slug,
+        mrp, sku, category, details, created_at
     )
-    return {
-        "product_id": prod_id, "sellerId": user["user_id"], "storeSlug": store["slug"],
-        "title": title, "description": desc, "price": body.price, "stock": body.stock,
-        "optionGroups": option_groups_json, "active": body.active,
-        "image": primary, "images": images, "paymentMethods": pay_methods,
-        "slug": prod_slug, "created_at": created_at,
-    }
+    created = await db.fetch_one("SELECT * FROM products WHERE product_id = $1", prod_id)
+    return public_product(created, owner=True)
 
 
 @api.get("/products")
 async def my_products(user=Depends(get_current_user)):
     rows = await db.fetch_all("SELECT * FROM products WHERE seller_id = $1 ORDER BY created_at DESC LIMIT 500", user["user_id"])
-    return [public_product(r) for r in rows]
+    return [public_product(r, owner=True) for r in rows]
 
 
 @api.put("/products/{product_id}")
@@ -1407,6 +1498,7 @@ async def update_product(product_id: str, body: ProductIn, user=Depends(get_curr
     images = _clean_product_images(body)
     primary = images[0] if images else None
     pay_methods = _clean_payment_methods(body)
+    mrp, sku, category, details = _clean_product_details(body)
     title = security.sanitize_text(body.title, 200)
     desc = security.sanitize_text(body.description, 2000)
     option_groups_json = [og.model_dump() for og in body.optionGroups]
@@ -1420,14 +1512,15 @@ async def update_product(product_id: str, body: ProductIn, user=Depends(get_curr
     await db.execute(
         """
         UPDATE products
-        SET title = $1, description = $2, price = $3, stock = $4, option_groups = $5, active = $6, image = $7, images = $8, payment_methods = $9, slug = $10
-        WHERE product_id = $11 AND seller_id = $12
+        SET title = $1, description = $2, price = $3, stock = $4, option_groups = $5, active = $6, image = $7, images = $8, payment_methods = $9, slug = $10,
+            mrp = $11, sku = $12, category = $13, details = $14
+        WHERE product_id = $15 AND seller_id = $16
         """,
         title, desc, body.price, body.stock, option_groups_json, body.active, primary, images,
-        pay_methods, prod_slug, product_id, user["user_id"]
+        pay_methods, prod_slug, mrp, sku, category, details, product_id, user["user_id"]
     )
     updated = await db.fetch_one("SELECT * FROM products WHERE product_id = $1", product_id)
-    return public_product(updated)
+    return public_product(updated, owner=True)
 
 
 @api.delete("/products/{product_id}")
@@ -2286,7 +2379,7 @@ async def checkout(slug: str, body: OrderIn, request: Request):
             raw_prod = await db.fetch_one("SELECT * FROM products WHERE product_id = $1 AND active = TRUE", it.productId)
             if not raw_prod or raw_prod["store_slug"] != store["slug"]:
                 raise HTTPException(status_code=400, detail=f"Invalid product {it.productId}")
-            prod = public_product(raw_prod)
+            prod = public_product(raw_prod, owner=True)
             prod_cache[it.productId] = prod
         unit = float(prod["price"])
         d = demand.setdefault(it.productId, {"product_qty": 0, "options": {}})
@@ -2307,7 +2400,10 @@ async def checkout(slug: str, body: OrderIn, request: Request):
         total += line_total
         items.append({"productId": it.productId, "title": prod["title"],
                       "optionSelections": it.optionSelections, "quantity": it.quantity,
-                      "unitPrice": unit})
+                      "unitPrice": unit,
+                      # Snapshotted so the seller's order still shows the code
+                      # they pick stock by, even if the listing changes later.
+                      **({"sku": prod["sku"]} if prod.get("sku") else {})})
 
     # Stock check (product-level).
     for pid, d in demand.items():

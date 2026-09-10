@@ -16,8 +16,11 @@ import api, { formatApiError } from "@/lib/api";
 import { aiEnabled, streamProductDescription } from "@/lib/aiDescription";
 import { fileUrl } from "@/components/ImageUpload";
 import { Btn, Note } from "@/components/Kit";
+import { CATEGORIES, CONDITIONS, percentOff } from "@/lib/productMeta";
 
 const MAX_PHOTOS = 6;
+const MAX_HIGHLIGHTS = 6;
+const MAX_SPECS = 20;
 
 const blankGroup = () => ({ name: "", options: [{ label: "", priceDelta: "", stock: "" }] });
 
@@ -44,6 +47,17 @@ function emptyForm() {
     images: [],
     groups: [],
     paymentMethods: ["online"],
+    mrp: "",
+    sku: "",
+    category: "",
+    brand: "",
+    condition: "new",
+    highlights: [],
+    specs: [],
+    // Most sellers here make or source in India; a new listing starts there
+    // and the seller changes it if not. Existing listings are never assumed.
+    countryOfOrigin: "India",
+    manufacturer: "",
   };
 }
 
@@ -58,6 +72,15 @@ function formFromProduct(p) {
     active: p.active !== false,
     images,
     paymentMethods: (p.paymentMethods && p.paymentMethods.length) ? [...p.paymentMethods] : ["online"],
+    mrp: p.mrp != null ? String(p.mrp) : "",
+    sku: p.sku || "",
+    category: p.category || "",
+    brand: p.brand || "",
+    condition: p.condition || "new",
+    highlights: [...(p.highlights || [])],
+    specs: (p.specs || []).map((s) => ({ name: s.name || "", value: s.value || "" })),
+    countryOfOrigin: p.countryOfOrigin || "",
+    manufacturer: p.manufacturer || "",
     groups: (p.optionGroups || []).map((g) => ({
       name: g.name || "",
       options: (g.options || []).map((o) => ({
@@ -448,10 +471,32 @@ export default function ProductEditor({ open, product, onClose, onSaved }) {
         : [...form.paymentMethods, id]
     );
 
+  const setHighlight = (i, v) =>
+    set("highlights", form.highlights.map((h, j) => (j === i ? v : h)));
+  const addHighlight = () =>
+    form.highlights.length < MAX_HIGHLIGHTS && set("highlights", [...form.highlights, ""]);
+  const removeHighlight = (i) => set("highlights", form.highlights.filter((_, j) => j !== i));
+
+  const setSpec = (i, k, v) =>
+    set("specs", form.specs.map((s, j) => (j === i ? { ...s, [k]: v } : s)));
+  const addSpec = (name = "") =>
+    form.specs.length < MAX_SPECS && set("specs", [...form.specs, { name, value: "" }]);
+  const removeSpec = (i) => set("specs", form.specs.filter((_, j) => j !== i));
+
+  const category = CATEGORIES.find((c) => c.id === form.category);
+  const specNames = new Set(form.specs.map((s) => s.name.trim().toLowerCase()));
+  const suggestions = (category?.specs || []).filter((n) => !specNames.has(n.toLowerCase()));
+
+  const off = percentOff(form.price, form.mrp);
+  // Selling above MRP is illegal in India; the server refuses it too.
+  const mrpTooLow =
+    form.mrp !== "" && Number(form.mrp) > 0 && Number(form.price) > 0 && Number(form.mrp) < Number(form.price);
+
   const submit = async () => {
     setErr("");
     if (!form.title.trim()) return setErr("Add a product title.");
     if (!form.price || Number(form.price) <= 0) return setErr("Add a price greater than ₹0.");
+    if (mrpTooLow) return setErr("MRP can't be lower than your price — nothing can be sold above its MRP.");
     if (!form.paymentMethods.length) return setErr("Pick at least one way buyers can pay.");
     setSaving(true);
     const payload = {
@@ -464,6 +509,18 @@ export default function ProductEditor({ open, product, onClose, onSaved }) {
       images: form.images,
       paymentMethods: form.paymentMethods,
       optionGroups: groupsPayload,
+      mrp: form.mrp === "" ? null : Number(form.mrp),
+      sku: form.sku.trim(),
+      category: form.category,
+      brand: form.brand.trim(),
+      condition: form.condition,
+      highlights: form.highlights.map((h) => h.trim()).filter(Boolean),
+      // A suggestion tapped but never filled in is dropped, not saved blank.
+      specs: form.specs
+        .map((s) => ({ name: s.name.trim(), value: s.value.trim() }))
+        .filter((s) => s.name && s.value),
+      countryOfOrigin: form.countryOfOrigin.trim(),
+      manufacturer: form.manufacturer.trim(),
     };
     try {
       if (editing) await api.put(`/products/${product.product_id}`, payload);
@@ -521,6 +578,51 @@ export default function ProductEditor({ open, product, onClose, onSaved }) {
                   onChange={(e) => set("title", e.target.value)}
                 />
               </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className={labelCls} htmlFor="product-category">Category</label>
+                  <select
+                    id="product-category"
+                    data-testid="product-category"
+                    className={inputCls}
+                    value={form.category}
+                    onChange={(e) => set("category", e.target.value)}
+                  >
+                    <option value="">Choose a category</option>
+                    {CATEGORIES.map((c) => (
+                      <option key={c.id} value={c.id}>{c.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className={labelCls} htmlFor="product-condition">Condition</label>
+                  <select
+                    id="product-condition"
+                    data-testid="product-condition"
+                    className={inputCls}
+                    value={form.condition}
+                    onChange={(e) => set("condition", e.target.value)}
+                  >
+                    {CONDITIONS.map((c) => (
+                      <option key={c.id} value={c.id}>{c.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className={labelCls} htmlFor="product-brand">
+                  Brand <span className="font-medium normal-case tracking-normal text-neutral-400">— optional</span>
+                </label>
+                <input
+                  id="product-brand"
+                  data-testid="product-brand"
+                  className={inputCls}
+                  placeholder="Your label, or the maker's brand"
+                  value={form.brand}
+                  maxLength={80}
+                  onChange={(e) => set("brand", e.target.value)}
+                />
+              </div>
               <div>
                 <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
                   <label className={`${labelCls} mb-0`}>Description</label>
@@ -539,6 +641,47 @@ export default function ProductEditor({ open, product, onClose, onSaved }) {
                   maxLength={2000}
                   onChange={(e) => set("description", e.target.value)}
                 />
+              </div>
+              <div>
+                <label className={labelCls}>
+                  Key highlights{" "}
+                  <span className="font-medium normal-case tracking-normal text-neutral-400">— optional, up to {MAX_HIGHLIGHTS}</span>
+                </label>
+                <p className="-mt-0.5 mb-2 text-xs text-neutral-500">
+                  Short points buyers scan before they read the description.
+                </p>
+                <div className="space-y-2">
+                  {form.highlights.map((h, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <input
+                        data-testid={`product-highlight-${i}`}
+                        className={inputCls}
+                        placeholder={i === 0 ? "e.g. Hand block printed in Jaipur" : "Another highlight"}
+                        value={h}
+                        maxLength={200}
+                        onChange={(e) => setHighlight(i, e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeHighlight(i)}
+                        aria-label="Remove highlight"
+                        className="shrink-0 rounded-lg p-2 text-neutral-400 hover:bg-rose-50 hover:text-rose-600"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                {form.highlights.length < MAX_HIGHLIGHTS && (
+                  <button
+                    type="button"
+                    data-testid="add-highlight-btn"
+                    onClick={addHighlight}
+                    className="mt-2 inline-flex items-center gap-1.5 text-xs font-bold text-[#FF4F00] hover:underline"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> Add highlight
+                  </button>
+                )}
               </div>
             </div>
           </Section>
@@ -559,6 +702,31 @@ export default function ProductEditor({ open, product, onClose, onSaved }) {
                 />
               </div>
               <div>
+                <label className={labelCls} htmlFor="product-mrp">
+                  MRP (₹) <span className="font-medium normal-case tracking-normal text-neutral-400">— optional</span>
+                </label>
+                <input
+                  id="product-mrp"
+                  data-testid="product-mrp"
+                  type="number"
+                  min="0"
+                  inputMode="decimal"
+                  className={inputCls}
+                  placeholder="999"
+                  value={form.mrp}
+                  onChange={(e) => set("mrp", e.target.value)}
+                />
+                {mrpTooLow ? (
+                  <p className="mt-1 text-xs font-bold text-[#8A2200]">MRP can't be lower than your price.</p>
+                ) : off > 0 ? (
+                  <p data-testid="mrp-preview" className="mt-1 text-xs font-bold text-[#0B5227]">
+                    Buyers see {off}% off
+                  </p>
+                ) : (
+                  <p className="mt-1 text-xs text-neutral-500">The printed maximum price. Shows your discount.</p>
+                )}
+              </div>
+              <div>
                 <label className={labelCls}>Stock</label>
                 <input
                   data-testid="product-stock"
@@ -570,6 +738,21 @@ export default function ProductEditor({ open, product, onClose, onSaved }) {
                   value={form.stock}
                   onChange={(e) => set("stock", e.target.value)}
                 />
+              </div>
+              <div>
+                <label className={labelCls} htmlFor="product-sku">
+                  SKU <span className="font-medium normal-case tracking-normal text-neutral-400">— optional</span>
+                </label>
+                <input
+                  id="product-sku"
+                  data-testid="product-sku"
+                  className={inputCls}
+                  placeholder="e.g. KURTA-BLUE-M"
+                  value={form.sku}
+                  maxLength={64}
+                  onChange={(e) => set("sku", e.target.value)}
+                />
+                <p className="mt-1 text-xs text-neutral-500">Your own stock code. Shown on orders, never to buyers.</p>
               </div>
             </div>
             <label className="mt-4 flex items-center gap-3 rounded-xl border border-neutral-200 bg-neutral-50/60 p-3.5 cursor-pointer">
@@ -588,6 +771,75 @@ export default function ProductEditor({ open, product, onClose, onSaved }) {
 
           <Section
             step={4}
+            title="Specifications"
+            hint={
+              category
+                ? `What buyers of ${category.label.toLowerCase()} look for. Tap one to add it.`
+                : "Pick a category above for suggestions, or add your own."
+            }
+          >
+            {suggestions.length > 0 && form.specs.length < MAX_SPECS && (
+              <div className="mb-3 flex flex-wrap gap-2" data-testid="spec-suggestions">
+                {suggestions.map((name) => (
+                  <button
+                    key={name}
+                    type="button"
+                    onClick={() => addSpec(name)}
+                    className="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white px-2.5 py-1 text-xs font-bold text-neutral-700 transition-colors hover:border-[#FF4F00] hover:text-[#FF4F00]"
+                  >
+                    <Plus className="h-3 w-3" /> {name}
+                  </button>
+                ))}
+              </div>
+            )}
+            {form.specs.length > 0 && (
+              <div className="space-y-2">
+                {form.specs.map((s, i) => (
+                  <div key={i} className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)_2rem] items-center gap-2">
+                    <input
+                      data-testid={`spec-name-${i}`}
+                      className={`${inputCls} py-2`}
+                      placeholder="e.g. Material"
+                      value={s.name}
+                      maxLength={40}
+                      onChange={(e) => setSpec(i, "name", e.target.value)}
+                    />
+                    <input
+                      data-testid={`spec-value-${i}`}
+                      className={`${inputCls} py-2`}
+                      placeholder="e.g. Pure cotton"
+                      value={s.value}
+                      maxLength={200}
+                      // A tapped suggestion arrives named; jump straight to its value.
+                      autoFocus={s.name !== "" && s.value === "" && i === form.specs.length - 1}
+                      onChange={(e) => setSpec(i, "value", e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeSpec(i)}
+                      aria-label="Remove specification"
+                      className="rounded-lg p-1.5 text-neutral-400 hover:bg-rose-50 hover:text-rose-600"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {form.specs.length < MAX_SPECS && (
+              <button
+                type="button"
+                data-testid="add-spec-btn"
+                onClick={() => addSpec("")}
+                className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold text-[#FF4F00] hover:underline"
+              >
+                <Plus className="h-3.5 w-3.5" /> Add your own
+              </button>
+            )}
+          </Section>
+
+          <Section
+            step={5}
             title="How buyers can pay"
             hint="Turn off cash on delivery and buyers won't see it for this item."
           >
@@ -628,7 +880,7 @@ export default function ProductEditor({ open, product, onClose, onSaved }) {
           </Section>
 
           <Section
-            step={5}
+            step={6}
             title="Variants"
             hint="Optional — sizes, colours, or materials buyers choose between."
           >
@@ -707,6 +959,40 @@ export default function ProductEditor({ open, product, onClose, onSaved }) {
               <Btn variant="ghost" onClick={addGroup} data-testid="add-group-btn">
                 <Plus className="h-4 w-4" /> Add variant group
               </Btn>
+            </div>
+          </Section>
+
+          <Section
+            step={7}
+            title="Origin & maker"
+            hint="Indian e-commerce rules ask sellers to show where a product is from, and who made or packed packaged goods."
+          >
+            <div className="space-y-4">
+              <div>
+                <label className={labelCls} htmlFor="product-origin">Country of origin</label>
+                <input
+                  id="product-origin"
+                  data-testid="product-origin"
+                  className={inputCls}
+                  placeholder="India"
+                  value={form.countryOfOrigin}
+                  maxLength={60}
+                  onChange={(e) => set("countryOfOrigin", e.target.value)}
+                />
+              </div>
+              <div>
+                <label className={labelCls} htmlFor="product-maker">Manufacturer, packer or importer</label>
+                <textarea
+                  id="product-maker"
+                  data-testid="product-maker"
+                  rows={2}
+                  className={inputCls}
+                  placeholder="Name and full address — needed on packaged goods"
+                  value={form.manufacturer}
+                  maxLength={500}
+                  onChange={(e) => set("manufacturer", e.target.value)}
+                />
+              </div>
             </div>
           </Section>
 

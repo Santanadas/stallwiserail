@@ -203,6 +203,17 @@ SPA fallback are on the root app. Supporting modules:
   later rejection sets `status = 'needs_attention'` and stops retrying. A seller who
   already has a real linked account is never downgraded to pending — that path still
   returns 503 and leaves their account alone.
+- **MRP is a ceiling, and the SKU is the seller's.** Products carry optional
+  catalogue fields: `mrp`, `sku` and `category` as columns; brand, condition,
+  highlights, specs, country of origin and manufacturer in the `details` JSON.
+  `_clean_product_details()` refuses an MRP below the selling price (nothing may be
+  sold above MRP in India) and drops unknown categories and conditions.
+  `public_product` includes `sku` only with `owner=True`; checkout snapshots it
+  into order items. Category ids live in both `PRODUCT_CATEGORIES` and
+  `frontend/src/lib/productMeta.js` — change both.
+- **JSON-LD is escaped in `seo.build_head`.** `json.dumps` leaves `<` alone, so a
+  product titled `</script>…` used to close the structured-data tag on the
+  server-rendered page. Keep seller text out of `<script>` any other way.
 - **Stock is taken at checkout and must be given back.** Nothing released it until
   `release_abandoned_checkouts()` existed, so every closed payment window permanently
   removed a unit from the shop. A late payment re-reserves rather than losing the sale.

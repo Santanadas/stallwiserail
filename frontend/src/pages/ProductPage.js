@@ -7,6 +7,7 @@ import CartDrawer from "@/components/CartDrawer";
 import { useCart, unitPriceFor, isSoldOut } from "@/lib/useCart";
 import { useCheckout } from "@/lib/useCheckout";
 import { useDocumentMeta } from "@/lib/useDocumentMeta";
+import { categoryLabel, conditionLabel, percentOff } from "@/lib/productMeta";
 
 export default function ProductPage() {
   const { storeSlug, productSlug } = useParams();
@@ -50,6 +51,20 @@ export default function ProductPage() {
   const price = product ? unitPriceFor(product, selections) : 0;
   const sold = product ? isSoldOut(product) : false;
   const images = product?.images?.length ? product.images : product?.image ? [product.image] : [];
+  // Option price changes move the MRP with the price, so the discount shown is
+  // the one for the variant the buyer picked.
+  const mrp = product?.mrp ? product.mrp + (price - product.price) : null;
+  const off = percentOff(price, mrp);
+  const detailRows = product
+    ? [
+        product.brand && { name: "Brand", value: product.brand },
+        product.category && { name: "Category", value: categoryLabel(product.category) },
+        product.condition && product.condition !== "new" && { name: "Condition", value: conditionLabel(product.condition) },
+        ...(product.specs || []),
+        product.countryOfOrigin && { name: "Country of origin", value: product.countryOfOrigin },
+        product.manufacturer && { name: "Manufacturer / packer", value: product.manufacturer },
+      ].filter((row) => row && row.value)
+    : [];
 
   const { checkout, placing, err, setErr } = useCheckout({
     storeSlug,
@@ -170,10 +185,32 @@ export default function ProductPage() {
 
           {/* Detail */}
           <div>
-            <h1 className="mk-head text-3xl font-black leading-tight tracking-tighter sm:text-4xl">{product.title}</h1>
-            <p className="mk-head mt-3 text-3xl font-black tracking-tighter text-[#0A0A0A]">
-              ₹{price.toLocaleString("en-IN")}
-            </p>
+            {product.brand && (
+              <p data-testid="product-brand" className="text-xs font-bold uppercase tracking-widest text-[#525252]">
+                {product.brand}
+              </p>
+            )}
+            <h1 className={`mk-head text-3xl font-black leading-tight tracking-tighter sm:text-4xl ${product.brand ? "mt-1" : ""}`}>
+              {product.title}
+            </h1>
+            <div className="mt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <p className="mk-head text-3xl font-black tracking-tighter text-[#0A0A0A]">
+                ₹{price.toLocaleString("en-IN")}
+              </p>
+              {off > 0 && (
+                <>
+                  <span className="text-sm text-[#525252]">
+                    MRP <s>₹{mrp.toLocaleString("en-IN")}</s>
+                  </span>
+                  <span
+                    data-testid="percent-off"
+                    className="border border-[#0A0A0A] bg-[#FF4F00] px-2 py-0.5 text-[11px] font-black uppercase tracking-wider text-white"
+                  >
+                    {off}% off
+                  </span>
+                </>
+              )}
+            </div>
 
             <div className="mt-3 flex flex-wrap gap-2">
               {product.stock != null && (
@@ -186,7 +223,23 @@ export default function ProductPage() {
                   Cash on delivery
                 </span>
               )}
+              {product.condition && product.condition !== "new" && (
+                <span data-testid="product-condition" className="border border-[#0A0A0A] bg-white px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider">
+                  {conditionLabel(product.condition)}
+                </span>
+              )}
             </div>
+
+            {product.highlights?.length > 0 && (
+              <ul data-testid="product-highlights" className="mt-5 space-y-2">
+                {product.highlights.map((h, i) => (
+                  <li key={i} className="flex gap-2.5 text-sm leading-snug">
+                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-[#FF4F00]" strokeWidth={3} />
+                    <span>{h}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
 
             {product.description && (
               <p className="mt-5 whitespace-pre-line text-sm leading-relaxed text-[#525252]">{product.description}</p>
@@ -258,6 +311,23 @@ export default function ProductPage() {
             </Link>
           </div>
         </div>
+
+        {detailRows.length > 0 && (
+          <section className="mt-12" data-testid="product-specs">
+            <h2 className="mk-head text-lg font-extrabold uppercase tracking-widest">Product details</h2>
+            <dl className="mt-4 border-2 border-[#0A0A0A] bg-white">
+              {detailRows.map((row, i) => (
+                <div
+                  key={`${row.name}-${i}`}
+                  className={`grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-4 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] ${i ? "border-t border-[#E5E5E5]" : ""}`}
+                >
+                  <dt className="font-bold text-[#525252]">{row.name}</dt>
+                  <dd className="whitespace-pre-line break-words">{row.value}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        )}
 
         {/* Related — internal links so crawlers reach every product */}
         {data.related?.length > 0 && (

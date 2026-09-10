@@ -216,6 +216,10 @@ def _init_sqlite_schema(conn: sqlite3.Connection):
         images TEXT DEFAULT '[]',
         payment_methods TEXT DEFAULT '["online"]',
         slug TEXT,
+        mrp NUMERIC,
+        sku TEXT,
+        category TEXT,
+        details TEXT DEFAULT '{}',
         created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_products_seller ON products(seller_id);
@@ -393,6 +397,10 @@ CREATE TABLE IF NOT EXISTS products (
     images TEXT DEFAULT '[]',
     payment_methods TEXT DEFAULT '["online"]',
     slug TEXT,
+    mrp NUMERIC,
+    sku TEXT,
+    category TEXT,
+    details TEXT DEFAULT '{}',
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_products_seller ON products(seller_id);
@@ -481,6 +489,10 @@ _COLUMN_MIGRATIONS: Dict[str, Dict[str, str]] = {
         "images": "TEXT DEFAULT '[]'",
         "payment_methods": "TEXT DEFAULT '[\"online\"]'",
         "slug": "TEXT",
+        "mrp": "NUMERIC",
+        "sku": "TEXT",
+        "category": "TEXT",
+        "details": "TEXT DEFAULT '{}'",
     },
     "orders": {
         "window_expires_at": "TEXT",
@@ -619,7 +631,7 @@ def _row_to_dict(row: Optional[sqlite3.Row]) -> Optional[Dict[str, Any]]:
     if not row:
         return None
     d = dict(row)
-    for k in ("option_groups", "images", "payment_methods", "address", "items", "notes"):
+    for k in ("option_groups", "images", "payment_methods", "address", "items", "notes", "details"):
         if k in d and isinstance(d[k], str):
             try:
                 d[k] = json.loads(d[k])

@@ -10,6 +10,7 @@ import CartDrawer from "@/components/CartDrawer";
 import { useCart, isSoldOut } from "@/lib/useCart";
 import { useCheckout } from "@/lib/useCheckout";
 import { useDocumentMeta } from "@/lib/useDocumentMeta";
+import { CATEGORIES, percentOff } from "@/lib/productMeta";
 
 function initials(name) {
   return (name || "S").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
@@ -92,6 +93,7 @@ export default function Shop() {
   const [copied, setCopied] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
   const [payMethod, setPayMethod] = useState("online");
+  const [category, setCategory] = useState("all");
 
   // Items are added on each product's own page; the cart lives in
   // localStorage per shop, so it is already here when the buyer comes back.
@@ -125,6 +127,11 @@ export default function Shop() {
   };
 
   const productsList = Array.isArray(shop?.products) ? shop.products : [];
+  // Category chips only earn their space once a shop spans two or more.
+  const shopCategories = CATEGORIES.filter((c) => productsList.some((p) => p.category === c.id));
+  const activeCategory = shopCategories.some((c) => c.id === category) ? category : "all";
+  const visibleProducts =
+    activeCategory === "all" ? productsList : productsList.filter((p) => p.category === activeCategory);
 
   const { checkout, placing, err, setErr } = useCheckout({
     storeSlug,
@@ -348,9 +355,31 @@ export default function Shop() {
         <div className="mb-3.5 flex items-baseline justify-between sm:mb-5">
           <h2 className="mk-head text-[17px] font-extrabold uppercase tracking-[0.14em] sm:text-xl">Products</h2>
           <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#525252] sm:text-xs">
-            {productsList.length} {productsList.length === 1 ? "item" : "items"}
+            {visibleProducts.length} {visibleProducts.length === 1 ? "item" : "items"}
           </span>
         </div>
+
+        {shopCategories.length > 1 && (
+          <div
+            data-testid="shop-categories"
+            className="-mx-4 mb-3.5 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:mb-5 sm:flex-wrap sm:px-0"
+          >
+            {[{ id: "all", label: "All" }, ...shopCategories].map((c) => {
+              const on = activeCategory === c.id;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => setCategory(c.id)}
+                  aria-pressed={on}
+                  className={`shrink-0 border-2 border-[#0A0A0A] px-3 py-1.5 text-xs font-extrabold uppercase tracking-[0.08em] transition-colors ${on ? "bg-[#0A0A0A] text-white" : "bg-white hover:bg-[#FFF4E0]"}`}
+                >
+                  {c.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {productsList.length === 0 ? (
           <div className="border-2 border-[#0A0A0A] bg-white px-6 py-10 text-center shadow-[6px_6px_0px_0px_rgba(10,10,10,1)] sm:py-12" data-testid="shop-empty">
@@ -366,10 +395,12 @@ export default function Shop() {
              captions — but price stays, because nobody should have to tap to
              learn it. */
           <div className="grid grid-cols-2 gap-[2px] border-2 border-[#0A0A0A] bg-[#0A0A0A] lg:grid-cols-3">
-            {productsList.map((p) => {
+            {visibleProducts.map((p) => {
               const sold = isSoldOut(p);
               const { price, varies } = tilePrice(p);
               const priceLabel = `${varies ? "From " : ""}${rupees(price)}`;
+              // Same rule as the product page: option deltas move MRP too.
+              const off = percentOff(price, p.mrp ? p.mrp + (price - p.price) : 0);
               return (
                 <Link
                   key={p.product_id}
@@ -397,6 +428,12 @@ export default function Shop() {
                     <span className="absolute left-2 top-2 border-[1.5px] border-[#0A0A0A] bg-[#FFF4E0] px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-[0.08em] sm:left-3 sm:top-3 sm:px-2 sm:text-[10px]">
                       <span className="sm:hidden">COD</span>
                       <span className="hidden sm:inline">Cash on delivery</span>
+                    </span>
+                  )}
+
+                  {off > 0 && !sold && (
+                    <span className="absolute right-2 top-2 border-[1.5px] border-[#0A0A0A] bg-[#FF4F00] px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-[0.08em] text-white sm:right-3 sm:top-3 sm:px-2 sm:text-[10px]">
+                      {off}% off
                     </span>
                   )}
 
