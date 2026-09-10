@@ -121,17 +121,33 @@ export default function HomeSection({ summary, loading, error, onRetry, orders, 
     // no way to forward it — so the wording has to be blunt about that, and
     // has to stop telling a seller who is waiting on Razorpay to go and do
     // something they have already done.
-    const waiting = queue.bankSubmitted;
+    // Details saved while Route is off need nothing from the seller at all —
+    // calling that "action needed" would send them round in circles.
+    const state = queue.bankNeedsAttention ? "fix"
+      : queue.bankAwaitingPlatform ? "saved"
+      : queue.bankSubmitted ? "verifying"
+      : "missing";
+    const copy = {
+      fix: {
+        tag: "Action needed", headline: "Re-enter your bank details", cta: "Fix details",
+        note: "Razorpay couldn't accept the details you saved. Until you enter them again your shop can only take cash on delivery.",
+      },
+      saved: {
+        tag: "Saved", headline: "Bank details saved", cta: "View",
+        note: "Online payouts aren't switched on for Stall Wise yet. Your account connects automatically once they are — until then your shop takes cash on delivery.",
+      },
+      verifying: {
+        tag: "Being verified", headline: "Bank verification pending", cta: "Check status",
+        note: "Razorpay is checking your details. Until that finishes your shop can only take cash on delivery.",
+      },
+      missing: {
+        tag: "Action needed", headline: "Add your bank", cta: "Add bank details",
+        note: "Your shop can only take cash on delivery until this is done — online payments are turned off because there is nowhere to send the money.",
+      },
+    }[state];
     tasks.push(
       <Task key="bank" tone="amber" icon={Landmark}
-        tag={waiting ? "Being verified" : "Action needed"}
-        headline={waiting ? "Bank verification pending" : "Add your bank"}
-        note={
-          waiting
-            ? "Razorpay is checking your details. Until that finishes your shop can only take cash on delivery."
-            : "Your shop can only take cash on delivery until this is done — online payments are turned off because there is nowhere to send the money."
-        }
-        cta={waiting ? "Check status" : "Add bank details"}
+        tag={copy.tag} headline={copy.headline} note={copy.note} cta={copy.cta}
         onClick={() => onNav("payouts")} />
     );
   }

@@ -1044,7 +1044,11 @@ def _route_public(route: dict) -> dict:
         # Whether money can actually reach them, not merely whether they typed
         # their details in.
         "payoutsLive": _payouts_live(route),
-        "detailsSubmitted": bool(route.get("account_id")),
+        # Saved while Route was off; connects on its own once it is on.
+        "pending": route.get("mode") == "pending",
+        # Razorpay turned the saved details down on a later attempt.
+        "needsAttention": route.get("status") == "needs_attention",
+        "detailsSubmitted": bool(route.get("account_id")) or route.get("mode") == "pending",
         "accountIdLast4": (route.get("account_id") or "")[-4:],
         "beneficiaryName": route.get("beneficiary_name"),
         "ifsc": route.get("ifsc"),
@@ -1065,7 +1069,7 @@ def _record_payout_outage(reason: str) -> None:
 
 async def _save_route(user, store, account_id, legal, contact, phone, beneficiary,
                       account_enc, bank_last4, ifsc, *, status, product_config_id,
-                      settlement_status):
+                      settlement_status, mode="razorpay"):
     """Write the seller's Route row. Used by both the success and the
     part-way-through paths, so a linked account is never left only at Razorpay."""
     await db.execute(
@@ -1080,9 +1084,106 @@ async def _save_route(user, store, account_id, legal, contact, phone, beneficiar
             ifsc = EXCLUDED.ifsc, product_config_id = EXCLUDED.product_config_id,
             settlement_status = EXCLUDED.settlement_status, updated_at = EXCLUDED.updated_at
         """,
-        user["user_id"], store["slug"], account_id, "razorpay", status,
+        user["user_id"], store["slug"], account_id, mode, status,
         legal, contact, phone, beneficiary, account_enc, bank_last4, ifsc,
         product_config_id, settlement_status, iso(now()))
+
+
+async def _complete_pending_onboarding(route: dict) -> str:
+    """Create the linked account for details saved while Route was off.
+
+    Returns "done", "platform" (Route still unavailable), "partial" (an account
+    now exists at Razorpay but setup did not finish — the normal resume path
+    takes it from here), "rejected" (Razorpay turned the details down, so the
+    seller has to re-enter them) or "skipped".
+    """
+    seller_id = route["seller_id"]
+    seller = await db.fetch_one("SELECT email FROM users WHERE user_id = $1", seller_id)
+    if not seller or not route.get("account_number_enc"):
+        return "skipped"
+    try:
+        account_number = security.decrypt_secret(route["account_number_enc"])
+    except Exception:
+        logger.error("saved payout details for %s cannot be decrypted", seller_id)
+        return "skipped"
+
+    who, where = {"user_id": seller_id}, {"slug": route["store_slug"]}
+    details = dict(legal=route.get("legal_business_name") or "",
+                   contact=route.get("contact_name") or "",
+                   phone=route.get("phone") or "",
+                   beneficiary=route.get("beneficiary_name") or "",
+                   account_enc=route["account_number_enc"],
+                   bank_last4=route.get("account_number_last4"),
+                   ifsc=route.get("ifsc") or "")
+    payload = {
+        "email": seller["email"], "phone": details["phone"],
+        "reference_id": route["store_slug"],
+        "legal_business_name": details["legal"], "business_type": "individual",
+        "contact_name": details["contact"], "beneficiary_name": details["beneficiary"],
+        "account_number": account_number, "ifsc": details["ifsc"],
+        "profile": {"category": "ecommerce", "subcategory": "marketplace"},
+    }
+    try:
+        result = await asyncio.to_thread(route_service.create_linked_account, payload, None)
+    except route_service.RouteError as e:
+        if getattr(e, "account_id", None):
+            await _save_route(who, where, e.account_id, *details.values(),
+                              status=e.status or "created",
+                              product_config_id=e.product_config_id,
+                              settlement_status=e.settlement_status or "pending")
+            return "partial"
+        if e.is_platform_fault:
+            _record_payout_outage(str(e))
+            await db.execute(
+                "UPDATE seller_routes SET updated_at = $1 WHERE seller_id = $2 AND mode = 'pending'",
+                iso(now()), seller_id)
+            return "platform"
+        # The seller was told their details were saved, so a rejection cannot
+        # just sit in a log: mark it, and the payouts panel asks them to re-enter.
+        logger.warning("saved payout details for %s were rejected: %s", seller_id, e)
+        await db.execute(
+            "UPDATE seller_routes SET status = 'needs_attention', updated_at = $1 "
+            "WHERE seller_id = $2 AND mode = 'pending'", iso(now()), seller_id)
+        return "rejected"
+
+    await _save_route(who, where, result["account_id"], *details.values(),
+                      status=result["status"],
+                      product_config_id=result.get("product_config_id"),
+                      settlement_status=result.get("settlement_status"))
+    global _payout_outage
+    _payout_outage = None
+    logger.info("completed saved payout onboarding for %s", seller_id)
+    return "done"
+
+
+# How often a saved-but-unconnected payout account is retried in the background.
+_PENDING_RETRY_MINUTES = 30
+
+
+async def retry_pending_onboarding() -> int:
+    """Connect every seller whose details were saved while Route was off.
+
+    Runs from the sweeper, so the day Route is enabled every waiting seller is
+    connected without anyone lifting a finger. Stops at the first "still not
+    enabled" answer: that is a platform-wide state, and asking again for each
+    remaining seller would only spend Razorpay's rate limit to learn it twice.
+    """
+    cutoff = iso(now() - timedelta(minutes=_PENDING_RETRY_MINUTES))
+    rows = await db.fetch_all(
+        """
+        SELECT * FROM seller_routes
+        WHERE mode = 'pending' AND status != 'needs_attention' AND updated_at < $1
+        ORDER BY updated_at LIMIT 20
+        """,
+        cutoff)
+    done = 0
+    for row in rows:
+        outcome = await _complete_pending_onboarding(row)
+        if outcome == "done":
+            done += 1
+        elif outcome == "platform":
+            break
+    return done
 
 
 @api.post("/seller/route/onboard")
@@ -1146,11 +1247,29 @@ async def route_onboard(body: RouteOnboardIn, user=Depends(get_current_user)):
                 "RAZORPAY ROUTE IS NOT ENABLED ON THE PLATFORM ACCOUNT — no seller "
                 "can onboard for payouts and no shop can take online payments. "
                 "Razorpay said: %s", e)
-            raise HTTPException(
-                status_code=503,
-                detail="Bank payouts aren't switched on for Stall Wise yet — this is "
-                       "on us, not your details. Your shop can still take cash on "
-                       "delivery, and we'll email you the moment it's sorted.")
+            # This used to hand the seller an error, which asked them to fix
+            # something that was never theirs and threw away everything they
+            # had typed. Their details are fine: keep them, encrypted as usual,
+            # and tell them they are done. The linked account is created on its
+            # own once Route is on — see _complete_pending_onboarding and the
+            # sweeper — so nobody has to come back and type it all again.
+            if prior_account and not getattr(e, "account_id", None):
+                # They already have a linked account and were changing it. Never
+                # overwrite a working account with details that could not be
+                # applied — that would quietly stop payouts they already have.
+                raise HTTPException(
+                    status_code=503,
+                    detail="Couldn't update your bank details right now — this is on us, "
+                           "not your details. Your existing payout account is unchanged.")
+            if not getattr(e, "account_id", None):
+                await _save_route(user, store, "", clean_legal, clean_contact, clean_phone,
+                                  clean_beneficiary, account_number_enc(), bank_last4,
+                                  clean_ifsc, status="awaiting_platform",
+                                  product_config_id=None, settlement_status="pending",
+                                  mode="pending")
+            saved = await db.fetch_one(
+                "SELECT * FROM seller_routes WHERE seller_id = $1", user["user_id"])
+            return _route_public(saved)
         # Razorpay saying the details are wrong is the seller's to fix and must
         # reach them as a plain 400 — a 5xx here gets turned into a gateway
         # error page by the proxy in front of us, so the seller sees "the origin
@@ -1180,6 +1299,10 @@ async def refresh_route(user=Depends(get_current_user)):
     route = await db.fetch_one("SELECT * FROM seller_routes WHERE seller_id = $1", user["user_id"])
     if not route:
         raise HTTPException(status_code=404, detail="No payout account connected")
+    if route.get("mode") == "pending":
+        await _complete_pending_onboarding(route)
+        route = await db.fetch_one("SELECT * FROM seller_routes WHERE seller_id = $1", user["user_id"])
+        return _route_public(route)
     fresh = await asyncio.to_thread(
         route_service.fetch_account_status, route.get("account_id"), route.get("product_config_id")
     )
@@ -1461,7 +1584,12 @@ async def dashboard_summary(request: Request, user=Depends(get_current_user)):
             # Submitted-but-unverified is a different message from never
             # started: one needs the seller to do something, the other needs
             # them to wait.
-            "bankSubmitted": bool(route and route.get("account_id")),
+            "bankSubmitted": bool(route and (route.get("account_id") or route.get("mode") == "pending")),
+            # Saved, and waiting on the platform rather than on Razorpay's
+            # checks: the seller has nothing to do and should be told so.
+            "bankAwaitingPlatform": bool(route and route.get("mode") == "pending"
+                                         and route.get("status") != "needs_attention"),
+            "bankNeedsAttention": bool(route and route.get("status") == "needs_attention"),
         },
         "metrics": {
             "grossThisMonth": round(gross_this, 2),
@@ -1996,13 +2124,17 @@ async def release_abandoned_checkouts() -> int:
 
 async def _sweep_forever() -> None:
     while True:
-        try:
-            await asyncio.sleep(_SWEEP_SECONDS)
-            await release_abandoned_checkouts()
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("abandoned-checkout sweep failed")
+        await asyncio.sleep(_SWEEP_SECONDS)
+        # Separate try blocks: a Razorpay hiccup while connecting a waiting
+        # seller must not stop abandoned checkouts giving their stock back.
+        for job, what in ((release_abandoned_checkouts, "abandoned-checkout sweep"),
+                          (retry_pending_onboarding, "saved payout onboarding retry")):
+            try:
+                await job()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("%s failed", what)
 
 
 async def _mark_order_paid(order_row: dict, payment_id: Optional[str]) -> bool:

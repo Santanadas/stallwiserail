@@ -439,9 +439,11 @@ function RouteSection({ onChange }) {
       const { data } = await api.post("/seller/route/onboard", payload);
       setMsgTone("success");
       setMsg(
-        data?.payoutsLive
-          ? "Bank account linked. Razorpay is verifying it — payouts activate once verification completes."
-          : "Bank details saved. Direct payouts will switch on once Razorpay Route finishes verification."
+        data?.pending
+          ? "Bank details saved — there's nothing more you need to do. Online payouts aren't switched on for Stall Wise yet; your account connects automatically as soon as they are, and until then your shop takes cash on delivery."
+          : data?.payoutsLive
+          ? "Bank account linked. Online payouts are on."
+          : "Bank details saved. Razorpay is verifying them — online payouts switch on once it finishes."
       );
       setForm({
         legal_business_name: "",
@@ -515,7 +517,7 @@ function RouteSection({ onChange }) {
           ) : route?.connected ? (
             <>
               <Clock className="h-4 w-4 text-amber-600" />
-              <span>Verifying</span>
+              <span>{route.needsAttention ? "Needs attention" : route.pending ? "Saved" : "Verifying"}</span>
             </>
           ) : (
             <>
@@ -545,7 +547,11 @@ function RouteSection({ onChange }) {
             <div className="grid gap-4 sm:grid-cols-3">
               <div className="rounded-xl bg-white p-4 border border-neutral-100 shadow-2xs">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-400">Linked Account</span>
-                <p className="mt-1 font-mono text-sm font-bold text-[#0A0A0A]">••••{route.accountIdLast4}</p>
+                <p className="mt-1 font-mono text-sm font-bold text-[#0A0A0A]">
+                  {route.pending
+                    ? <span className="font-sans text-amber-600">Connects automatically</span>
+                    : <>••••{route.accountIdLast4}</>}
+                </p>
               </div>
 
               {route.bankLast4 && (
@@ -564,11 +570,23 @@ function RouteSection({ onChange }) {
               </div>
             </div>
 
-            {!live && (
-              <Note tone="warning" className="mt-4">
-                Running in fallback mode — Razorpay Route did not accept this account yet. Until it does, orders settle to the platform and are paid out manually.
+            {/* The old note here said orders "settle to the platform and are
+                paid out manually". They do not: checkout refuses an online
+                payment it cannot forward, so a shop without live payouts takes
+                cash on delivery only. */}
+            {route.needsAttention ? (
+              <Note tone="warning" className="mt-4" data-testid="route-needs-attention">
+                Razorpay couldn't accept these bank details. Disconnect, then enter them again — until then your shop takes cash on delivery.
               </Note>
-            )}
+            ) : route.pending ? (
+              <Note tone="info" className="mt-4" data-testid="route-pending">
+                Your details are saved. Online payouts aren't switched on for Stall Wise yet — this is on us, not your details. Your account connects automatically once they are; until then your shop takes cash on delivery.
+              </Note>
+            ) : !live ? (
+              <Note tone="warning" className="mt-4">
+                Razorpay hasn't activated this account yet. Until it does, your shop takes cash on delivery. Use “Refresh status” to check.
+              </Note>
+            ) : null}
             {live && !settlementReady && (
               <Note tone="info" className="mt-4">
                 Razorpay is verifying your bank account. This usually takes a few minutes to a couple of hours. Use “Refresh status” to check.

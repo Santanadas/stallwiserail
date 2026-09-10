@@ -87,7 +87,9 @@ def test_route_not_enabled_is_not_blamed_on_the_seller(seller_with_store, monkey
     detail = r.json()["detail"]
     assert "on us, not your details" in detail
     assert "merchant" not in detail.lower(), "do not repeat Razorpay's wording at the seller"
-    assert "cash on delivery" in detail, "tell them what they can still do"
+    # This seller already has a working account, so nothing is saved over it;
+    # the no-account case saves instead — see test_pending_payouts.py.
+    assert "unchanged" in detail, "tell them their existing payouts still work"
 
 
 def test_a_gateway_failure_is_still_a_502(seller_with_store, monkeypatch):

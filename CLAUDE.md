@@ -195,6 +195,14 @@ SPA fallback are on the root app. Supporting modules:
   seller out for ever. `RouteError` carries the `account_id` and the row is saved on
   the failure path. Razorpay's own 4xx is returned to the seller as a 400 — a 5xx gets
   replaced by Cloudflare's error page and they never see the reason.
+- **"Route not enabled" saves, it doesn't error.** When Razorpay says Route isn't on
+  for the platform account, a seller with no linked account has their details stored
+  as a `mode = 'pending'` row (`account_id` is the empty string — the column is NOT
+  NULL) and is told they're done. `retry_pending_onboarding()` runs from the sweeper
+  every `_PENDING_RETRY_MINUTES` and finishes each one once Razorpay accepts it; a
+  later rejection sets `status = 'needs_attention'` and stops retrying. A seller who
+  already has a real linked account is never downgraded to pending — that path still
+  returns 503 and leaves their account alone.
 - **Stock is taken at checkout and must be given back.** Nothing released it until
   `release_abandoned_checkouts()` existed, so every closed payment window permanently
   removed a unit from the shop. A late payment re-reserves rather than losing the sale.
