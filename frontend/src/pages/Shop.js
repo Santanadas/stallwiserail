@@ -1,10 +1,13 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ShoppingBag, Store, ArrowRight, Package, Share2, Check, ShieldCheck } from "lucide-react";
+import {
+  ShoppingBag, Store, ArrowRight, Package, Share2, Check, ShieldCheck,
+  Truck, Clock, Banknote, CreditCard, User,
+} from "lucide-react";
 import api, { formatApiError } from "@/lib/api";
 import { fileUrl } from "@/components/ImageUpload";
 import CartDrawer from "@/components/CartDrawer";
-import { useCart, unitPriceFor, isSoldOut } from "@/lib/useCart";
+import { useCart, isSoldOut } from "@/lib/useCart";
 import { useCheckout } from "@/lib/useCheckout";
 import { useDocumentMeta } from "@/lib/useDocumentMeta";
 
@@ -12,17 +15,87 @@ function initials(name) {
   return (name || "S").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
 }
 
+const rupees = (n) => `₹${Math.round(Number(n) || 0).toLocaleString("en-IN")}`;
+
+const acceptsCod = (p) => (p.paymentMethods || []).includes("cod");
+const acceptsOnlineMethod = (p) => (p.paymentMethods || ["online"]).includes("online");
+
+/**
+ * The cheapest a buyer can get this product for, and whether that is the only
+ * price. A tile has room for one number; when options change the price it has
+ * to say "from", or the buyer is quoted a figure they cannot actually pay.
+ */
+function tilePrice(p) {
+  let price = Number(p.price || 0);
+  let varies = false;
+  for (const g of p.optionGroups || []) {
+    const opts = (g?.options || []).filter((o) => o && o.label && o.stock !== 0);
+    if (!opts.length) continue;
+    const deltas = opts.map((o) => Number(o.priceDelta || 0));
+    const low = Math.min(...deltas);
+    if (Math.max(...deltas) !== low) varies = true;
+    price += low;
+  }
+  return { price, varies };
+}
+
+/**
+ * Why a stranger's link is safe to buy from. Every line is a setting the shop
+ * endpoint already returns, or a mechanic every order goes through — nothing
+ * here is decoration, and a line whose fact is missing is left out rather than
+ * filled in.
+ */
+function trustPoints(shop, products) {
+  const s = shop.store || {};
+  const points = [];
+
+  const fee = Number(s.deliveryFee || 0);
+  const threshold = s.freeDeliveryAbove;
+  if (fee <= 0) {
+    points.push({ icon: Truck, title: "Free delivery", sub: "on every order", long: "Free delivery on every order" });
+  } else if (threshold != null) {
+    points.push({ icon: Truck, title: "Free delivery", sub: `over ${rupees(threshold)}`, long: `Free delivery over ${rupees(threshold)}` });
+  } else {
+    points.push({ icon: Truck, title: `Delivery ${rupees(fee)}`, sub: "flat, any order", long: `Flat ${rupees(fee)} delivery` });
+  }
+
+  const days = s.dispatchDays ?? 2;
+  const ships = days <= 0 ? "Ships today" : `Ships in ${days} day${days === 1 ? "" : "s"}`;
+  points.push({ icon: Clock, title: ships, sub: "after you order", long: days <= 0 ? "Dispatched the day you order" : `Dispatched in ${days} day${days === 1 ? "" : "s"}` });
+
+  const cod = products.some(acceptsCod);
+  const online = shop.acceptsOnline !== false && products.some(acceptsOnlineMethod);
+  if (cod && online) {
+    points.push({ icon: Banknote, title: "Cash on delivery", sub: "or UPI & cards", long: "UPI, cards or cash on delivery" });
+  } else if (online) {
+    points.push({ icon: CreditCard, title: "UPI & cards", sub: "netbanking too", long: "UPI, cards and netbanking" });
+  } else if (cod) {
+    points.push({ icon: Banknote, title: "Cash on delivery", sub: "pay at your door", long: "Cash on delivery — pay at your door" });
+  }
+
+  points.push({
+    icon: ShieldCheck,
+    title: "You confirm it",
+    sub: "code at handover",
+    long: "Delivery is yours to confirm",
+    detail: "You get a code by email and give it to the seller at handover.",
+    highlight: true,
+  });
+  return points;
+}
+
 export default function Shop() {
   const { storeSlug } = useParams();
   const [shop, setShop] = useState(null);
   const [loadErr, setLoadErr] = useState("");
-  const [selections, setSelections] = useState({});
   const [buyer, setBuyer] = useState({ buyerName: "", buyerEmail: "", buyerPhone: "" });
   const [copied, setCopied] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
   const [payMethod, setPayMethod] = useState("online");
 
-  const { cart, addItem, removeItem, setQty, clear, cartTotal, cartCount, allowedPayments } =
+  // Items are added on each product's own page; the cart lives in
+  // localStorage per shop, so it is already here when the buyer comes back.
+  const { cart, removeItem, setQty, clear, cartTotal, cartCount, allowedPayments } =
     useCart(storeSlug);
 
   const load = useCallback(async () => {
@@ -51,11 +124,6 @@ export default function Shop() {
     }
   };
 
-  const pickOption = (pid, group, label) =>
-    setSelections({ ...selections, [pid]: { ...(selections[pid] || {}), [group]: label } });
-
-  const unitPrice = (p) => unitPriceFor(p, selections[p.product_id] || {});
-
   const productsList = Array.isArray(shop?.products) ? shop.products : [];
 
   const { checkout, placing, err, setErr } = useCheckout({
@@ -80,25 +148,12 @@ export default function Shop() {
     }
   }, [payable, payMethod]);
 
-  const addToCart = (p) => {
-    const sel = selections[p.product_id] || {};
-    for (const g of p.optionGroups || []) {
-      if (!g?.name) continue;
-      if (!sel[g.name]) { setErr(`Pick a ${g.name} for ${p.title}`); return; }
-      const opt = (g.options || []).find((o) => o?.label === sel[g.name]);
-      if (opt && opt.stock === 0) { setErr(`${g.name} ${opt.label} is out of stock`); return; }
-    }
-    setErr("");
-    addItem({
-      productId: p.product_id,
-      title: p.title,
-      quantity: 1,
-      optionSelections: sel,
-      unitPrice: unitPrice(p),
-      paymentMethods: (p.paymentMethods && p.paymentMethods.length) ? p.paymentMethods : ["online"],
-    });
-    setCartOpen(true);
-  };
+  // Mirrors delivery_for() on the server, same as the cart drawer: the bar
+  // says "Checkout ₹X", so X has to be what the buyer will actually be asked
+  // for, delivery included.
+  const fee = Number(shop?.store?.deliveryFee || 0);
+  const threshold = shop?.store?.freeDeliveryAbove ?? null;
+  const delivery = fee > 0 && !(threshold != null && cartTotal >= threshold) ? fee : 0;
 
   // Schema.org Structured Data for Store & Products
   const shopSchema = shop?.store ? {
@@ -150,6 +205,10 @@ export default function Shop() {
   );
   if (!shop) return <div className="mk flex min-h-screen items-center justify-center bg-[#FAFAFA] text-sm text-[#525252]">Loading…</div>;
 
+  const points = trustPoints(shop, productsList);
+  const codOnly = shop.acceptsOnline === false && productsList.some(acceptsCod);
+  const shopName = shop.store?.name || "Shop";
+
   return (
     <div className="mk min-h-screen bg-[#FAFAFA] pb-24 text-[#0A0A0A] sm:pb-12" data-testid="shop-page">
       {err && !cartOpen && (
@@ -188,156 +247,197 @@ export default function Shop() {
         </div>
       </header>
 
-      {/* Shop banner */}
+      {/* Who this is, and what they promise. On a wide screen both sit in one
+          band so a buyer takes them in at a glance without the terms pushing
+          the products below the fold. */}
       <section className="border-b-2 border-[#0A0A0A] bg-white">
-        <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-10 md:px-8 md:py-14">
-          <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:gap-6">
-            <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-[#0A0A0A] bg-[#FF4F00] shadow-[4px_4px_0px_0px_rgba(10,10,10,1)] sm:h-24 sm:w-24 sm:shadow-[5px_5px_0px_0px_rgba(10,10,10,1)]" data-testid="shop-avatar">
-              {shop.seller?.avatar ? (
-                <img src={fileUrl(shop.seller.avatar)} alt={shop.store?.name || "Shop"} className="h-full w-full object-cover" />
-              ) : (
-                <span className="mk-head text-2xl font-black text-white sm:text-3xl">{initials(shop.store?.name)}</span>
-              )}
-            </div>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-3">
-                <h1 data-testid="shop-name" className="mk-head text-3xl font-black leading-tight tracking-tighter sm:text-4xl md:text-5xl">{shop.store?.name || "Shop"}</h1>
-                {/* Earned at 50 completed orders, never bought — see
-                    VERIFIED_AFTER_ORDERS in server.py. The title carries the
-                    meaning so the badge is never just a mysterious tick. */}
-                {shop.verified && (
-                  <span
-                    data-testid="verified-badge"
-                    title="This seller has completed 50 or more orders without a dispute."
-                    className="inline-flex items-center gap-1.5 border-2 border-[#0A0A0A] bg-[#0A0A0A] px-2 py-1 text-[10px] font-black uppercase tracking-widest text-white"
-                  >
-                    <ShieldCheck className="h-3.5 w-3.5 text-[#FF4F00]" />
-                    Verified
-                  </span>
+        <div className="mx-auto flex max-w-5xl flex-col gap-8 px-4 py-6 sm:px-6 sm:py-10 md:px-8 lg:flex-row lg:items-start lg:gap-10 lg:py-10">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start gap-4 sm:gap-5">
+              <div className="flex h-[72px] w-[72px] shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-[#0A0A0A] bg-[#FF4F00] shadow-[4px_4px_0px_0px_rgba(10,10,10,1)] sm:h-24 sm:w-24 sm:shadow-[5px_5px_0px_0px_rgba(10,10,10,1)]" data-testid="shop-avatar">
+                {shop.seller?.avatar ? (
+                  <img src={fileUrl(shop.seller.avatar)} alt={shopName} className="h-full w-full object-cover" />
+                ) : (
+                  <span className="mk-head text-[26px] font-black text-white sm:text-3xl">{initials(shop.store?.name)}</span>
                 )}
               </div>
-              <p className="mt-1 text-xs font-medium text-[#525252] sm:text-sm">
-                stallwise.in/<span className="font-bold text-[#0A0A0A]">{shop.store?.slug || storeSlug}</span>
-              </p>
-              {shop.store?.bio && <p className="mt-3 max-w-2xl text-sm leading-relaxed text-[#525252] sm:text-base" data-testid="shop-bio">{shop.store.bio}</p>}
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2">
+                  <h1 data-testid="shop-name" className="mk-head text-[32px] font-black leading-[1.05] tracking-tighter sm:text-5xl">{shopName}</h1>
+                  {/* Earned at 50 completed orders, never bought — see
+                      VERIFIED_AFTER_ORDERS in server.py. The words sit next to
+                      the mark because an unexplained tick reassures nobody. */}
+                  {shop.verified && (
+                    <span
+                      data-testid="verified-badge"
+                      title="This seller has completed 50 or more orders without a dispute."
+                      className="inline-flex items-center gap-1.5 border-2 border-[#0A0A0A] bg-[#0A0A0A] px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-white sm:px-2.5 sm:text-[11px]"
+                    >
+                      <ShieldCheck className="h-3.5 w-3.5 text-[#FF4F00]" strokeWidth={2.5} />
+                      Verified seller
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1.5 text-xs font-medium text-[#525252] sm:text-sm">
+                  stallwise.in/<span className="font-bold text-[#0A0A0A]">{shop.store?.slug || storeSlug}</span>
+                </p>
+              </div>
             </div>
+            {shop.store?.bio && (
+              <p className="mt-4 max-w-xl text-sm leading-relaxed text-[#525252] [text-wrap:pretty] sm:text-[15px]" data-testid="shop-bio">{shop.store.bio}</p>
+            )}
+            {shop.seller?.name && (
+              <div className="mt-4 flex items-center gap-2 border-t border-[#E5E5E5] pt-4 lg:border-t-0 lg:pt-0">
+                <User className="h-4 w-4 text-[#525252]" />
+                <span className="text-xs font-semibold text-[#525252] sm:text-[13px]">
+                  Sold by <span className="font-bold text-[#0A0A0A]">{shop.seller.name}</span>
+                </span>
+              </div>
+            )}
           </div>
+
+          {/* Desktop: the promises as one card beside the identity. */}
+          <div className="hidden w-[300px] shrink-0 border-2 border-[#0A0A0A] bg-white shadow-[5px_5px_0px_0px_rgba(10,10,10,1)] lg:block" data-testid="shop-trust">
+            {points.map((pt, i) => (
+              <div
+                key={pt.long}
+                className={`flex items-start gap-3 px-4 py-3 ${i < points.length - 1 ? "border-b-2 border-[#0A0A0A]" : ""} ${pt.highlight ? "bg-[#FFF4E0]" : ""}`}
+              >
+                <pt.icon className="mt-0.5 h-[19px] w-[19px] shrink-0" />
+                <div>
+                  <div className="text-[13px] font-bold leading-snug">{pt.long}</div>
+                  {pt.detail && <div className="mt-1 text-xs leading-snug text-[#525252]">{pt.detail}</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Phone: the same promises as a 2-up grid of cells. The black shows
+            through the 2px gaps as shared rules; an odd last cell spans both
+            columns so no gap is left as a black hole. */}
+        <div className="grid grid-cols-2 gap-[2px] border-t-2 border-[#0A0A0A] bg-[#0A0A0A] lg:hidden">
+          {points.map((pt, i) => (
+            <div
+              key={pt.long}
+              className={`flex items-center gap-2.5 px-4 py-3.5 ${pt.highlight ? "bg-[#FFF4E0]" : "bg-white"} ${points.length % 2 === 1 && i === points.length - 1 ? "col-span-2" : ""}`}
+            >
+              <pt.icon className="h-5 w-5 shrink-0" />
+              <div className="min-w-0">
+                <div className="text-xs font-extrabold leading-tight">{pt.title}</div>
+                <div className="text-[11px] font-medium text-[#525252]">{pt.sub}</div>
+              </div>
+            </div>
+          ))}
         </div>
       </section>
 
-      {shop.showAds && (
-        <div className="mx-auto mt-4 max-w-5xl px-4 sm:px-6 md:px-8">
-          <div data-testid="ad-slot" className="border-2 border-dashed border-neutral-300 bg-white px-4 py-3 text-center text-xs font-bold uppercase tracking-widest text-neutral-400">
-            Ad slot — this seller is on the free plan
+      <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-10 md:px-8">
+        {codOnly && (
+          // Today this is every shop whose payouts are not live yet. Saying so
+          // up front beats a buyer finding out after typing in an address.
+          <div className="mb-6 flex items-start gap-3 border-2 border-[#0A0A0A] bg-[#FFF4E0] p-4 shadow-[4px_4px_0px_0px_rgba(10,10,10,1)]" data-testid="cod-only">
+            <Banknote className="mt-0.5 h-5 w-5 shrink-0" />
+            <div>
+              <p className="text-sm font-extrabold">This shop takes cash on delivery</p>
+              <p className="mt-1 text-[13px] leading-relaxed text-[#525252]">Pay the seller when your order arrives. Card and UPI aren't switched on here yet.</p>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Products */}
-      <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-10 md:px-8 md:py-14">
-        <div className="mb-6 flex items-baseline justify-between sm:mb-8">
-          <h2 className="mk-head text-lg font-extrabold uppercase tracking-widest sm:text-xl">Products</h2>
-          <span className="text-xs font-bold uppercase tracking-widest text-[#525252]">{productsList.length} items</span>
+        <div className="mb-3.5 flex items-baseline justify-between sm:mb-5">
+          <h2 className="mk-head text-[17px] font-extrabold uppercase tracking-[0.14em] sm:text-xl">Products</h2>
+          <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#525252] sm:text-xs">
+            {productsList.length} {productsList.length === 1 ? "item" : "items"}
+          </span>
         </div>
 
         {productsList.length === 0 ? (
-          <div className="border-2 border-[#0A0A0A] bg-white p-8 text-center sm:p-12" data-testid="shop-empty">
-            <Package className="mx-auto h-8 w-8 text-neutral-300" />
-            <p className="mt-3 text-sm text-[#525252]">This shop hasn't listed any products yet.</p>
+          <div className="border-2 border-[#0A0A0A] bg-white px-6 py-10 text-center shadow-[6px_6px_0px_0px_rgba(10,10,10,1)] sm:py-12" data-testid="shop-empty">
+            <Package className="mx-auto h-8 w-8 text-neutral-300" strokeWidth={1.75} />
+            <p className="mt-3 text-[15px] font-extrabold">{shop.seller?.name || shopName} hasn't listed anything yet</p>
+            <p className="mt-1 text-[13px] text-[#525252]">Save the link — this shop is just getting started.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 sm:gap-6">
+          /* A dense square grid, the way a shop reads on Instagram: the photo
+             is the product. The 2px rules are the grid gap showing through a
+             black container, so every hairline is shared. Names live on the
+             product page — on a grid this tight a caption fights the thing it
+             captions — but price stays, because nobody should have to tap to
+             learn it. */
+          <div className="grid grid-cols-2 gap-[2px] border-2 border-[#0A0A0A] bg-[#0A0A0A] lg:grid-cols-3">
             {productsList.map((p) => {
               const sold = isSoldOut(p);
+              const { price, varies } = tilePrice(p);
+              const priceLabel = `${varies ? "From " : ""}${rupees(price)}`;
               return (
-                <div key={p.product_id} data-testid={`shop-product-${p.product_id}`} className="group flex flex-col border-2 border-[#0A0A0A] bg-white transition-transform hover:-translate-y-1 hover:shadow-[6px_6px_0px_0px_rgba(10,10,10,1)]">
-                  <Link
-                    to={p.slug ? `/${storeSlug}/${p.slug}` : `/${storeSlug}`}
-                    aria-label={p.title}
-                    className="relative block aspect-square overflow-hidden border-b-2 border-[#0A0A0A] bg-[#FAFAFA]"
-                  >
-                    {p.image ? (
-                      <img src={fileUrl(p.image)} alt={p.title} className="h-full w-full object-cover" loading="lazy" />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center"><Package className="h-10 w-10 text-neutral-300" /></div>
-                    )}
-                    {sold && <div className="absolute inset-0 flex items-center justify-center bg-white/70"><span className="border-2 border-[#0A0A0A] bg-white px-3 py-1 text-xs font-black uppercase tracking-widest">Sold out</span></div>}
-                  </Link>
-                  <div className="flex flex-1 flex-col p-4 sm:p-5">
-                    <div className="flex items-start justify-between gap-3">
-                      <h3 className="text-base font-bold leading-snug">
-                        <Link
-                          to={p.slug ? `/${storeSlug}/${p.slug}` : `/${storeSlug}`}
-                          data-testid={`product-link-${p.product_id}`}
-                          className="hover:text-[#FF4F00]"
-                        >
-                          {p.title}
-                        </Link>
-                      </h3>
-                      <span className="mk-head shrink-0 text-lg font-black tracking-tighter">₹{unitPrice(p)}</span>
+                <Link
+                  key={p.product_id}
+                  to={p.slug ? `/${storeSlug}/${p.slug}` : `/${storeSlug}`}
+                  data-testid={`shop-product-${p.product_id}`}
+                  aria-label={`${p.title}, ${priceLabel}${sold ? ", sold out" : ""}`}
+                  className="group relative block aspect-square overflow-hidden bg-white outline-none focus-visible:z-10 focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-[#FF4F00]"
+                >
+                  {p.image ? (
+                    <img
+                      src={fileUrl(p.image)}
+                      alt=""
+                      loading="lazy"
+                      className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]"
+                    />
+                  ) : (
+                    // A seller who hasn't uploaded a photo should still look
+                    // like a shop, not a hole in the grid.
+                    <div className="flex h-full w-full items-center justify-center bg-[repeating-linear-gradient(135deg,#FAFAFA,#FAFAFA_9px,#F0F0F0_9px,#F0F0F0_18px)]">
+                      <Package className="h-8 w-8 text-[#C4C4C4] sm:h-10 sm:w-10" strokeWidth={1.75} />
                     </div>
-                    {p.description && <p className="mt-2 line-clamp-3 text-sm leading-relaxed text-[#525252]">{p.description}</p>}
-                    {(p.paymentMethods || []).includes("cod") && (
-                      <span className="mt-2 inline-block w-fit border border-[#0A0A0A] bg-[#FFF4E0] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">
-                        Cash on delivery
-                      </span>
-                    )}
-                    {p.stock != null && (p.optionGroups || []).length === 0 && (
-                      <span data-testid={`stock-${p.product_id}`} className={`mt-2 text-xs font-bold uppercase tracking-wider ${p.stock === 0 ? "text-[#8A2200]" : "text-[#0B5227]"}`}>
-                        {p.stock === 0 ? "Out of stock" : `${p.stock} in stock`}
-                      </span>
-                    )}
-                    <div className="mt-4 space-y-3">
-                      {(p.optionGroups || []).filter((g) => g && g.name).map((g) => (
-                        <div key={g.name}>
-                          <span className="text-xs font-bold uppercase tracking-widest text-[#525252]">{g.name}</span>
-                          <select
-                            data-testid={`option-${p.product_id}-${g.name}`}
-                            value={(selections[p.product_id] || {})[g.name] || ""}
-                            onChange={(e) => pickOption(p.product_id, g.name, e.target.value)}
-                            className="mt-1 w-full min-h-[42px] border-2 border-[#0A0A0A] bg-white px-2.5 py-2 text-base outline-none focus:border-[#FF4F00] sm:text-sm"
-                          >
-                            <option value="">Select</option>
-                            {(g.options || []).filter((o) => o && o.label).map((o) => (
-                              <option key={o.label} value={o.label} disabled={o.stock === 0}>
-                                {o.label}{o.priceDelta ? ` (+₹${o.priceDelta})` : ""}{o.stock === 0 ? " — sold out" : o.stock != null ? ` (${o.stock} left)` : ""}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      ))}
+                  )}
+
+                  {acceptsCod(p) && !sold && (
+                    <span className="absolute left-2 top-2 border-[1.5px] border-[#0A0A0A] bg-[#FFF4E0] px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-[0.08em] sm:left-3 sm:top-3 sm:px-2 sm:text-[10px]">
+                      <span className="sm:hidden">COD</span>
+                      <span className="hidden sm:inline">Cash on delivery</span>
+                    </span>
+                  )}
+
+                  {sold ? (
+                    <div className="absolute inset-0 flex items-center justify-center bg-white/70">
+                      <span className="border-2 border-[#0A0A0A] bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.14em] sm:px-3.5 sm:py-1.5 sm:text-xs">Sold out</span>
                     </div>
-                    <button
-                      data-testid={`add-cart-${p.product_id}`}
-                      onClick={() => addToCart(p)}
-                      disabled={sold}
-                      className="mt-5 inline-flex min-h-[44px] items-center justify-center gap-2 border-2 border-[#0A0A0A] bg-[#0A0A0A] px-4 py-2.5 text-sm font-bold text-white transition-transform hover:-translate-y-0.5 hover:bg-[#FF4F00] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
-                    >
-                      {sold ? "Sold out" : <>Add to cart <ShoppingBag className="h-4 w-4" /></>}
-                    </button>
-                  </div>
-                </div>
+                  ) : (
+                    <span className="mk-head absolute bottom-2 left-2 border-[1.5px] border-[#0A0A0A] bg-white px-2 py-0.5 text-sm font-black tracking-tight transition-colors group-hover:bg-[#0A0A0A] group-hover:text-white sm:bottom-3 sm:left-3 sm:border-2 sm:px-2.5 sm:py-1 sm:text-lg">
+                      {priceLabel}
+                    </span>
+                  )}
+                </Link>
               );
             })}
           </div>
         )}
 
+        {shop.showAds && (
+          <div data-testid="ad-slot" className="mt-5 border-2 border-dashed border-neutral-300 bg-white px-4 py-3.5 text-center text-[10px] font-extrabold uppercase tracking-[0.16em] text-neutral-400 sm:mt-7">
+            Advertisement
+          </div>
+        )}
       </main>
 
-      {/* Floating Sticky Mobile Cart Bar */}
+      {/* Sticky mobile cart bar */}
       {cart.length > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 border-t-2 border-[#0A0A0A] bg-[#0A0A0A] p-3 text-white shadow-2xl sm:hidden">
+        <div className="fixed bottom-0 left-0 right-0 z-40 border-t-2 border-[#0A0A0A] bg-[#0A0A0A] px-4 py-3 text-white shadow-2xl sm:hidden">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <span className="text-xs text-neutral-400">{cartCount} {cartCount === 1 ? "item" : "items"}</span>
-              <p className="mk-head text-lg font-black text-white">₹{cartTotal}</p>
+              <span className="text-[11px] font-semibold text-neutral-400">
+                {cartCount} {cartCount === 1 ? "item" : "items"} · {delivery > 0 ? `+ ${rupees(delivery)} delivery` : "delivery free"}
+              </span>
+              <p className="mk-head text-xl font-black tracking-tight text-white">{rupees(cartTotal + delivery)}</p>
             </div>
             <button
               type="button"
               onClick={() => setCartOpen(true)}
-              className="inline-flex min-h-[42px] items-center gap-2 border-2 border-[#0A0A0A] bg-[#FF4F00] px-4 py-2 text-xs font-black uppercase tracking-wider text-white"
+              className="inline-flex min-h-[44px] items-center gap-2 border-2 border-[#0A0A0A] bg-[#FF4F00] px-4 py-2 text-xs font-black uppercase tracking-wider text-white"
             >
-              Checkout <ArrowRight className="h-3.5 w-3.5" />
+              Checkout <ArrowRight className="h-3.5 w-3.5" strokeWidth={2.5} />
             </button>
           </div>
         </div>

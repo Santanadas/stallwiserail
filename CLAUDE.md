@@ -207,6 +207,17 @@ SPA fallback are on the root app. Supporting modules:
   `AI_ASSISTANT_ENABLED` as well for the shop assistant. A key in the environment is
   not consent. The assistant proposes; it never writes — `/api/ai/assistant/apply`
   re-checks ownership and bounds server-side.
+- **Global CSS goes in `@layer base`, never bare.** Tailwind v4 puts every utility in
+  `@layer utilities`, and unlayered CSS beats all layered CSS regardless of
+  specificity. A bare `* { border-color: hsl(var(--border)) }` in `index.css` —
+  left over from the v3→v4 port, where it had lived in `@layer base` — overrode
+  every `border-[#0A0A0A]` on the site, so the design system's 2px black borders all
+  rendered light grey and nobody noticed. Anything in `index.css` that targets an
+  element selector (`*`, `body`, `a`, …) must sit inside `@layer base`.
+- **The storefront grid has no add-to-cart.** `Shop.js` is an image-first square grid
+  (price chip, COD chip, sold-out veil); tiles link to the product page, which owns
+  option picking and adding. That works because `useCart` persists per shop in
+  localStorage — don't move the cart back into component state.
 - The repo has an Emergent test-agent protocol block at the top of `test_result.md`
   ("DO NOT EDIT OR REMOVE") — historical, from the platform this was built on.
 - `.emergent/`, `metadata.json`, `firebase-applet-config.json`, `assets/.aistudio/`
