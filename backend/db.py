@@ -276,6 +276,9 @@ def _init_sqlite_schema(conn: sqlite3.Connection):
         ifsc TEXT,
         product_config_id TEXT,
         settlement_status TEXT,
+        bank_name TEXT,
+        bank_verified_name TEXT,
+        bank_verified_at TEXT,
         updated_at TEXT NOT NULL
     );
 
@@ -484,6 +487,9 @@ _COLUMN_MIGRATIONS: Dict[str, Dict[str, str]] = {
     "seller_routes": {
         "product_config_id": "TEXT",
         "settlement_status": "TEXT",
+        "bank_name": "TEXT",
+        "bank_verified_name": "TEXT",
+        "bank_verified_at": "TEXT",
     },
     "products": {
         "images": "TEXT DEFAULT '[]'",

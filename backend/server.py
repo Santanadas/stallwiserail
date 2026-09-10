@@ -30,6 +30,7 @@ import security
 import email_service
 import storage
 import route_service
+import bank_verify
 import seo
 import ai_service
 import ai_assistant
@@ -163,6 +164,9 @@ class RouteOnboardIn(BaseModel):
     business_type: str = Field(default="individual", max_length=50)
     beneficiary_name: str = Field(default="", max_length=200)
     account_number: str = Field(default="", max_length=34)
+    # Typed a second time by the seller. Optional so older clients still work;
+    # when sent it has to match.
+    account_number_confirm: str = Field(default="", max_length=34)
     ifsc: str = Field(default="", max_length=11)
 
 
@@ -1102,6 +1106,10 @@ def _route_public(route: dict) -> dict:
         "accountIdLast4": (route.get("account_id") or "")[-4:],
         "beneficiaryName": route.get("beneficiary_name"),
         "ifsc": route.get("ifsc"),
+        "bankName": route.get("bank_name") or "",
+        # The bank itself confirmed the account exists under this name.
+        "bankVerified": bool(route.get("bank_verified_at")),
+        "bankVerifiedName": route.get("bank_verified_name") or "",
         "bankLast4": route.get("account_number_last4") or ((route.get("account_number") or "")[-4:] if route.get("account_number") else None),
     }
 
@@ -1115,6 +1123,74 @@ _payout_outage: Optional[dict] = None
 def _record_payout_outage(reason: str) -> None:
     global _payout_outage
     _payout_outage = {"reason": reason, "at": iso(now())}
+
+
+# A penny drop costs real money per check. Bounded per seller so a script — or
+# someone cycling through account numbers — can't run up the bill.
+_ACCOUNT_CHECKS_PER_DAY = 5
+
+
+async def _check_bank_details(user: dict, beneficiary: str, account: str, ifsc: str) -> dict:
+    """Refuse bank details that cannot receive money, before anything is saved.
+
+    Returns what was learned — the bank the IFSC belongs to and, when the bank
+    confirmed the account, the name it holds it under — for _record_bank_check.
+    A checking service that can't answer never blocks the seller: that failure
+    is ours, and Route verifies the account again before the first payout.
+    """
+    out = {"bank_name": None, "verified_name": None, "verified_at": None}
+
+    try:
+        branch = await asyncio.to_thread(bank_verify.lookup_ifsc, ifsc)
+    except bank_verify.BankCheckUnavailable as e:
+        logger.warning("IFSC directory unavailable, accepting %s on format alone: %s", ifsc, e)
+        branch = {}
+    if branch is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"There's no bank branch with the IFSC {ifsc}. Check it against your "
+                   f"cheque book or passbook.")
+    out["bank_name"] = (branch or {}).get("bank") or None
+
+    if not bank_verify.account_check_enabled():
+        return out
+    if not security.check_rate_limit(f"bank_check:{user['user_id']}",
+                                     max_requests=_ACCOUNT_CHECKS_PER_DAY, window_seconds=86400):
+        raise HTTPException(status_code=429,
+                            detail="Too many bank account checks today. Try again tomorrow.")
+    try:
+        check = await asyncio.to_thread(
+            bank_verify.check_account, name=beneficiary, account_number=account,
+            ifsc=ifsc, reference=user["user_id"])
+    except bank_verify.BankCheckUnavailable as e:
+        logger.error("bank account check unavailable for %s: %s", user["user_id"], e)
+        return out
+
+    if check.status == "invalid":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Your bank couldn't find an open account ending {account[-4:]} at {ifsc}. "
+                   f"Check the account number and IFSC against your passbook or cheque.")
+    if check.status == "valid":
+        if not bank_verify.names_match(beneficiary, check.registered_name):
+            # Deliberately not read back: showing the bank's name would turn
+            # this form into a lookup of who owns any account number.
+            raise HTTPException(
+                status_code=400,
+                detail="That account exists, but not under the name you entered. Use the "
+                       "account holder's name exactly as it's printed on your passbook or cheque.")
+        out["verified_name"] = check.registered_name or beneficiary
+        out["verified_at"] = iso(now())
+    return out
+
+
+async def _record_bank_check(user: dict, bank: dict) -> None:
+    """Store what _check_bank_details learned. Always overwrites, so details
+    entered later never inherit an earlier account's verification."""
+    await db.execute(
+        "UPDATE seller_routes SET bank_name = $1, bank_verified_name = $2, bank_verified_at = $3 "
+        "WHERE seller_id = $4",
+        bank["bank_name"], bank["verified_name"], bank["verified_at"], user["user_id"])
 
 
 async def _save_route(user, store, account_id, legal, contact, phone, beneficiary,
@@ -1256,6 +1332,15 @@ async def route_onboard(body: RouteOnboardIn, user=Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="That IFSC code doesn't look valid (e.g. HDFC0001234)")
     if not re.match(r"^\d{6,18}$", clean_account):
         raise HTTPException(status_code=400, detail="Bank account number must be 6–18 digits")
+    confirm = security.sanitize_text(body.account_number_confirm, 34).strip()
+    if confirm and confirm != clean_account:
+        raise HTTPException(status_code=400,
+                            detail="The two account numbers don't match. Type it again carefully.")
+
+    # Before anything is saved or sent to Razorpay: does the IFSC name a real
+    # branch, and (when RazorpayX validation is on) does the bank hold this
+    # account under this name?
+    bank = await _check_bank_details(user, clean_beneficiary, clean_account, clean_ifsc)
 
     payload = {
         "email": user["email"], "phone": clean_phone,
@@ -1286,6 +1371,7 @@ async def route_onboard(body: RouteOnboardIn, user=Depends(get_current_user)):
                               status=e.status or "created",
                               product_config_id=e.product_config_id,
                               settlement_status=e.settlement_status or "pending")
+            await _record_bank_check(user, bank)
         if e.is_platform_fault:
             # Route is not switched on for the platform's own Razorpay account.
             # Nothing the seller typed is wrong, and repeating Razorpay's words
@@ -1317,6 +1403,7 @@ async def route_onboard(body: RouteOnboardIn, user=Depends(get_current_user)):
                                   clean_ifsc, status="awaiting_platform",
                                   product_config_id=None, settlement_status="pending",
                                   mode="pending")
+                await _record_bank_check(user, bank)
             saved = await db.fetch_one(
                 "SELECT * FROM seller_routes WHERE seller_id = $1", user["user_id"])
             return _route_public(saved)
@@ -1332,8 +1419,31 @@ async def route_onboard(body: RouteOnboardIn, user=Depends(get_current_user)):
                       clean_ifsc, status=result["status"],
                       product_config_id=result.get("product_config_id"),
                       settlement_status=result.get("settlement_status"))
+    await _record_bank_check(user, bank)
     saved = await db.fetch_one("SELECT * FROM seller_routes WHERE seller_id = $1", user["user_id"])
     return _route_public(saved)
+
+
+@api.get("/seller/route/ifsc/{code}")
+async def route_ifsc_lookup(code: str, user=Depends(get_current_user)):
+    """Live branch lookup for the bank form, so a mistyped IFSC shows the wrong
+    branch — or none — while the seller is still typing.
+
+    Always a 200 with a status: a 404 or 5xx from here would reach the browser
+    looking like a broken page rather than an answer about the code.
+    """
+    if not security.check_rate_limit(f"ifsc:{user['user_id']}", max_requests=60, window_seconds=3600):
+        raise HTTPException(status_code=429, detail="Too many lookups. Try again shortly.")
+    clean = security.sanitize_text(code, 11).upper()
+    if not re.match(r"^[A-Z]{4}0[A-Z0-9]{6}$", clean):
+        raise HTTPException(status_code=400, detail="That IFSC code doesn't look valid (e.g. HDFC0001234)")
+    try:
+        branch = await asyncio.to_thread(bank_verify.lookup_ifsc, clean)
+    except bank_verify.BankCheckUnavailable:
+        return {"status": "unknown"}
+    if branch is None:
+        return {"status": "not_found"}
+    return {"status": "found", **branch}
 
 
 @api.get("/seller/route")

@@ -391,6 +391,7 @@ function RouteSection({ onChange }) {
     phone: "",
     beneficiary_name: "",
     account_number: "",
+    account_number_confirm: "",
     ifsc: "",
   });
   const [msg, setMsg] = useState("");
@@ -398,6 +399,40 @@ function RouteSection({ onChange }) {
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const upd = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+
+  // Look the IFSC up as soon as it's complete, so the seller sees which bank
+  // and branch it names before submitting — the quickest way to spot a typo.
+  const [ifscInfo, setIfscInfo] = useState({ status: "idle" });
+  const ifscCode = form.ifsc.trim().toUpperCase();
+  useEffect(() => {
+    if (!IFSC_RE.test(ifscCode)) {
+      setIfscInfo({ status: "idle" });
+      return;
+    }
+    let live = true;
+    setIfscInfo({ status: "checking" });
+    const t = setTimeout(async () => {
+      try {
+        const { data } = await api.get(`/seller/route/ifsc/${ifscCode}`);
+        if (live) setIfscInfo(data?.status ? data : { status: "unknown" });
+      } catch {
+        if (live) setIfscInfo({ status: "unknown" });
+      }
+    }, 350);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [ifscCode]);
+
+  const ifscNote =
+    ifscInfo.status === "found"
+      ? `✓ ${ifscInfo.bank}${ifscInfo.branch ? ` — ${ifscInfo.branch}` : ""}${ifscInfo.city ? `, ${ifscInfo.city}` : ""}`
+      : ifscInfo.status === "not_found"
+      ? "No bank branch has this IFSC. Check your cheque book or passbook."
+      : ifscInfo.status === "checking"
+      ? "Looking up the branch…"
+      : "11 characters — 4 letters, a 0, then 6 digits/letters.";
 
   const load = useCallback(async () => {
     try {
@@ -416,7 +451,11 @@ function RouteSection({ onChange }) {
     if (!/^\d{8,15}$/.test(form.phone.replace(/\D/g, ""))) return "Enter a valid phone number.";
     if (!form.beneficiary_name.trim()) return "Enter the bank account holder's name.";
     if (!ACCT_RE.test(form.account_number.trim())) return "Bank account number must be 6–18 digits.";
+    if (form.account_number_confirm.trim() !== form.account_number.trim())
+      return "The two account numbers don't match — type it again carefully.";
     if (!IFSC_RE.test(form.ifsc.trim())) return "That IFSC code doesn't look valid (e.g. HDFC0001234).";
+    if (ifscInfo.status === "not_found")
+      return `There's no bank branch with the IFSC ${ifscCode}. Check it against your cheque book or passbook.`;
     return null;
   };
 
@@ -435,15 +474,20 @@ function RouteSection({ onChange }) {
         phone: form.phone.replace(/\D/g, ""),
         ifsc: form.ifsc.trim().toUpperCase(),
         account_number: form.account_number.trim(),
+        account_number_confirm: form.account_number_confirm.trim(),
       };
       const { data } = await api.post("/seller/route/onboard", payload);
       setMsgTone("success");
+      const confirmed = data?.bankVerified
+        ? `Your bank confirmed this account${data.bankName ? ` at ${data.bankName}` : ""}. `
+        : "";
       setMsg(
-        data?.pending
+        confirmed +
+        (data?.pending
           ? "Bank details saved — there's nothing more you need to do. Online payouts aren't switched on for Stall Wise yet; your account connects automatically as soon as they are, and until then your shop takes cash on delivery."
           : data?.payoutsLive
           ? "Bank account linked. Online payouts are on."
-          : "Bank details saved. Razorpay is verifying them — online payouts switch on once it finishes."
+          : "Bank details saved. Razorpay is verifying them — online payouts switch on once it finishes.")
       );
       setForm({
         legal_business_name: "",
@@ -451,6 +495,7 @@ function RouteSection({ onChange }) {
         phone: "",
         beneficiary_name: "",
         account_number: "",
+        account_number_confirm: "",
         ifsc: "",
       });
       setRoute(data?.connected ? data : null);
@@ -558,7 +603,17 @@ function RouteSection({ onChange }) {
                 <div className="rounded-xl bg-white p-4 border border-neutral-100 shadow-2xs">
                   <span className="text-[11px] font-bold uppercase tracking-wider text-neutral-400">Bank Account</span>
                   <p className="mt-1 font-mono text-sm font-bold text-[#0A0A0A]">••••{route.bankLast4}</p>
-                  {route.ifsc && <p className="mt-0.5 font-mono text-[11px] text-neutral-500">{route.ifsc}</p>}
+                  {route.ifsc && (
+                    <p className="mt-0.5 text-[11px] text-neutral-500">
+                      {route.bankName && <span className="font-semibold">{route.bankName} · </span>}
+                      <span className="font-mono">{route.ifsc}</span>
+                    </p>
+                  )}
+                  {route.bankVerified && (
+                    <p data-testid="route-bank-verified" className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700">
+                      <CheckCircle2 className="h-3.5 w-3.5" /> Confirmed by your bank
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -639,17 +694,45 @@ function RouteSection({ onChange }) {
                 data-testid="route-account"
                 placeholder="Digits only"
                 inputMode="numeric"
+                autoComplete="off"
                 value={form.account_number}
                 onChange={upd("account_number")}
               />
               <Field
-                label="Bank IFSC Code"
-                data-testid="route-ifsc"
-                placeholder="e.g. HDFC0001234"
-                value={form.ifsc}
-                onChange={upd("ifsc")}
-                helper="11 characters — 4 letters, a 0, then 6 digits/letters."
+                label="Re-enter Account Number"
+                data-testid="route-account-confirm"
+                placeholder="Type it again to be sure"
+                inputMode="numeric"
+                autoComplete="off"
+                value={form.account_number_confirm}
+                onChange={upd("account_number_confirm")}
+                helper={
+                  form.account_number_confirm && form.account_number_confirm.trim() !== form.account_number.trim()
+                    ? "Doesn't match yet."
+                    : undefined
+                }
               />
+              <div>
+                <Field
+                  label="Bank IFSC Code"
+                  data-testid="route-ifsc"
+                  placeholder="e.g. HDFC0001234"
+                  value={form.ifsc}
+                  onChange={upd("ifsc")}
+                />
+                <p
+                  data-testid="route-ifsc-status"
+                  className={`mt-1 text-xs ${
+                    ifscInfo.status === "found"
+                      ? "font-semibold text-emerald-700"
+                      : ifscInfo.status === "not_found"
+                      ? "font-semibold text-rose-600"
+                      : "text-neutral-400"
+                  }`}
+                >
+                  {ifscNote}
+                </p>
+              </div>
             </div>
             <div className="mt-6 flex justify-end">
               <Btn variant="primary" data-testid="route-connect-btn" onClick={connect} disabled={busy}>

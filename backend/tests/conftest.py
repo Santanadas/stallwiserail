@@ -29,7 +29,8 @@ os.environ.update(
     }
 )
 for leak in ("DATABASE_URL", "POSTGRES_URL", "SUPABASE_DB_URL", "BREVO_API_KEY",
-             "SENDINBLUE_API_KEY", "RAZORPAY_WEBHOOK_SECRET", "ANTHROPIC_API_KEY"):
+             "SENDINBLUE_API_KEY", "RAZORPAY_WEBHOOK_SECRET", "ANTHROPIC_API_KEY",
+             "RAZORPAYX_ACCOUNT_NUMBER"):
     os.environ.pop(leak, None)
 
 PLATFORM_SECRET = os.environ["RAZORPAY_KEY_SECRET"]
@@ -41,6 +42,19 @@ import bcrypt as _bcrypt  # noqa: E402
 
 _real_gensalt = _bcrypt.gensalt
 _bcrypt.gensalt = lambda rounds=4, prefix=b"2b": _real_gensalt(4, prefix)
+
+
+@pytest.fixture(autouse=True)
+def _no_bank_directory(monkeypatch):
+    """Onboarding looks every IFSC up in a public directory over the internet.
+    Tests never do: every code resolves to a branch unless a test says otherwise
+    (see test_bank_verify.py)."""
+    import bank_verify
+
+    bank_verify._ifsc_cache.clear()
+    monkeypatch.setattr(bank_verify, "lookup_ifsc", lambda code: {
+        "ifsc": (code or "").upper(), "bank": "Test Bank", "branch": "Main Branch",
+        "city": "Mumbai", "state": "Maharashtra"})
 
 
 # --- A Razorpay stand-in --------------------------------------------------

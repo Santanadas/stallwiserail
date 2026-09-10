@@ -214,6 +214,17 @@ SPA fallback are on the root app. Supporting modules:
 - **JSON-LD is escaped in `seo.build_head`.** `json.dumps` leaves `<` alone, so a
   product titled `</script>…` used to close the structured-data tag on the
   server-rendered page. Keep seller text out of `<script>` any other way.
+- **Bank details are checked before they're saved, and a checker outage never
+  blocks.** `bank_verify.py` does two things in `route_onboard` before Razorpay is
+  called: the IFSC must exist in Razorpay's public branch directory
+  (ifsc.razorpay.com — `None` from `lookup_ifsc` is a 400), and when
+  `RAZORPAYX_ACCOUNT_NUMBER` is set, a RazorpayX penny drop must confirm the account
+  exists under a name that `names_match` the beneficiary. Anything that can't answer
+  raises `BankCheckUnavailable` and the seller goes through. A name mismatch is
+  refused without echoing the bank's name — that would make the form an
+  account-owner lookup. Penny drops cost money: 5 per seller per day. The test
+  suite stubs `lookup_ifsc` in an autouse conftest fixture; don't let a test reach
+  the network.
 - **Stock is taken at checkout and must be given back.** Nothing released it until
   `release_abandoned_checkouts()` existed, so every closed payment window permanently
   removed a unit from the shop. A late payment re-reserves rather than losing the sale.
