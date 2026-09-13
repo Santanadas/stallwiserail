@@ -311,3 +311,10 @@ def test_account_check_is_off_without_razorpayx(monkeypatch):
 ])
 def test_names_match_is_loose_but_not_meaningless(entered, registered, ok):
     assert bank_verify.names_match(entered, registered) is ok
+
+
+def test_an_ifsc_typed_in_small_letters_is_saved_in_capitals(seller_without_payouts, fake_route):
+    r = _onboard(seller_without_payouts, ifsc="sbin0000001")
+    assert r.status_code == 200, r.text
+    assert r.json()["ifsc"] == "SBIN0000001"
+    assert fake_route[0]["ifsc"] == "SBIN0000001", "Razorpay must get the code in capitals too"

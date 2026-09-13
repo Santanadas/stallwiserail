@@ -11,6 +11,12 @@ import { useDocumentMeta } from "@/lib/useDocumentMeta";
 const slugify = (s) =>
   s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
+// For the handle field while someone is typing in it. Same rules — small
+// letters, numbers and hyphens only — except a trailing hyphen is left alone:
+// stripping it on every keystroke deleted the hyphen before the next letter
+// arrived, so "studio-craft" could not be typed. slugify() finishes it off.
+const slugifyTyping = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+/, "");
+
 const STEPS = ["Welcome", "Store Name", "Profile Photo"];
 
 function Progress({ step }) {
@@ -123,10 +129,10 @@ export default function Onboarding() {
 
   const onSlug = (e) => {
     setSlugDirty(true);
-    const newSlug = slugify(e.target.value);
+    const newSlug = slugifyTyping(e.target.value);
     setHandle((h) => ({ ...h, slug: newSlug }));
     setHandleErr("");
-    checkAvailability(newSlug);
+    checkAvailability(slugify(newSlug));
   };
 
   const createShop = async () => {
@@ -147,7 +153,7 @@ export default function Onboarding() {
     try {
       const { data: createdStore } = await api.post("/stores", {
         name: handle.name,
-        slug: handle.slug,
+        slug: slugify(handle.slug),
         bio: handle.bio || "",
         acceptanceWindowMinutes: 120,
       });
@@ -351,6 +357,11 @@ export default function Onboarding() {
                       placeholder="studio-craft"
                       value={handle.slug}
                       onChange={onSlug}
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      autoComplete="off"
+                      helper="Small letters, numbers and hyphens only — capitals become small letters, so nobody can copy your handle with different capitals."
                     />
 
                     {/* Live link preview and availability status */}

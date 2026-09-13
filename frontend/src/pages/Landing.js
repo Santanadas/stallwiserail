@@ -395,13 +395,18 @@ export default function Landing() {
               className="flex w-full flex-col gap-2 sm:flex-row sm:gap-3 md:w-auto"
               onSubmit={(e) => {
                 e.preventDefault();
-                if (slug.trim()) navigate(`/${slug.trim()}`);
+                const handle = slug.trim().replace(/-+$/, "");
+                if (handle) navigate(`/${handle}`);
               }}
             >
               <input
                 data-testid="visit-slug-input"
                 value={slug || ""}
-                onChange={(e) => setSlug(e.target.value)}
+                // Handles are small letters only; show it that way as they type.
+                onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+/, ""))}
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
                 placeholder="store-handle"
                 aria-label="Store handle"
                 className="w-full border-2 border-[#0A0A0A] bg-white px-4 py-3 text-base outline-none transition-colors focus:border-[#FF4F00] sm:text-sm md:w-64"

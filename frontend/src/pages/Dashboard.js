@@ -716,9 +716,19 @@ function RouteSection({ onChange }) {
                 <Field
                   label="Bank IFSC Code"
                   data-testid="route-ifsc"
-                  placeholder="e.g. HDFC0001234"
+                  placeholder="e.g. SBIN0000000"
                   value={form.ifsc}
-                  onChange={upd("ifsc")}
+                  // IFSC codes are always capitals. Convert as they type, so
+                  // "sbin0000000" becomes SBIN0000000 on screen rather than
+                  // only in what gets saved; spaces and stray symbols go too.
+                  onChange={(e) =>
+                    setForm({ ...form, ifsc: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 11) })
+                  }
+                  maxLength={11}
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  autoComplete="off"
                 />
                 <p
                   data-testid="route-ifsc-status"

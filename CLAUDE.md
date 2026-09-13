@@ -225,6 +225,12 @@ SPA fallback are on the root app. Supporting modules:
   account-owner lookup. Penny drops cost money: 5 per seller per day. The test
   suite stubs `lookup_ifsc` in an autouse conftest fixture; don't let a test reach
   the network.
+- **Store handles are small letters at every layer.** `create_store` lowercases
+  and `SLUG_RE` only allows `a-z0-9-`, but the `slug` column's UNIQUE is
+  case-sensitive, so `idx_stores_slug_lower` (a unique index on `lower(slug)`)
+  is what stops a case-only copy of someone's handle. The onboarding field
+  lowercases as you type via `slugifyTyping`, which keeps a trailing hyphen —
+  `slugify` strips it, and running that per keystroke made hyphens untypeable.
 - **Stock is taken at checkout and must be given back.** Nothing released it until
   `release_abandoned_checkouts()` existed, so every closed payment window permanently
   removed a unit from the shop. A late payment re-reserves rather than losing the sale.

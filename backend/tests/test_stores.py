@@ -1,6 +1,8 @@
 import uuid
 
-from conftest import make_product
+import pytest
+
+from conftest import make_product, raw_execute
 
 
 def test_create_store_and_fetch_it(make_seller):
@@ -35,6 +37,30 @@ def test_slug_is_unique_across_sellers(make_seller):
     assert a.post("/api/stores", json={"name": "A", "slug": slug}).status_code == 200
     r = b.post("/api/stores", json={"name": "B", "slug": slug})
     assert r.status_code == 400 and "taken" in r.json()["detail"].lower()
+
+
+def test_a_handle_that_differs_only_in_capitals_is_already_taken(make_seller):
+    a, b = make_seller(), make_seller()
+    assert a.post("/api/stores", json={"name": "Chai Corner", "slug": "chai-corner"}).status_code == 200
+    r = b.post("/api/stores", json={"name": "Chai Corner", "slug": "Chai-CORNER"})
+    assert r.status_code == 400 and "taken" in r.json()["detail"].lower()
+
+
+def test_the_database_refuses_a_handle_that_differs_only_in_capitals(make_seller):
+    """The API lowercases every handle, but the column's own UNIQUE is
+    case-sensitive. The lower(slug) index is what stops any other path saving
+    "Chai-Corner" next to "chai-corner"."""
+    s = make_seller()
+    assert s.post("/api/stores", json={"name": "Chai Corner", "slug": "chai-corner"}).status_code == 200
+    insert = ("INSERT INTO stores (store_id, seller_id, name, slug, created_at) "
+              "VALUES ($1, $2, $3, $4, $5)")
+    # Control: the same insert with a genuinely different handle succeeds, so
+    # the failure below is the duplicate and not a missing column.
+    raw_execute(insert, "store_control", "user_control", "Tea Corner", "tea-corner",
+                "2026-09-10T00:00:00+00:00")
+    with pytest.raises(Exception):
+        raw_execute(insert, "store_copycat", "user_copycat", "Chai Corner", "Chai-Corner",
+                    "2026-09-10T00:00:00+00:00")
 
 
 def test_one_store_per_seller(seller_with_store):

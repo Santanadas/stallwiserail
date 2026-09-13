@@ -521,6 +521,11 @@ _COLUMN_MIGRATIONS: Dict[str, Dict[str, str]] = {
 # Indexes that depend on migrated columns, so they run after the ALTERs.
 _POST_MIGRATION_INDEXES = [
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_products_store_slug ON products(store_slug, slug)",
+    # The column's own UNIQUE is case-sensitive, so on its own it would let
+    # "Chai-Corner" sit beside "chai-corner" — one shop passing itself off as
+    # another. create_store lowercases every handle; this makes the database
+    # refuse a case-only duplicate from any path that forgets to.
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_stores_slug_lower ON stores (lower(slug))",
 ]
 
 
