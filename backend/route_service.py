@@ -59,10 +59,20 @@ class RouteError(Exception):
     _PLATFORM_FAULT = (
         "not enabled", "not activated", "feature is not", "not available for",
         "unauthorized", "unauthorised", "authentication",
+        # Razorpay's wording when our own key may not call this API at all:
+        # Route/partner access is not on it. "This route is for merchant only"
+        # reads to a seller as though their bank details had been rejected.
+        "this route is for", "merchant only", "merchants only",
+        "not a partner", "partner account", "access denied",
+        "does not have access", "no access to", "forbidden",
     )
 
     @property
     def is_platform_fault(self) -> bool:
+        # Authentication and permission are properties of the platform's key,
+        # never of anything a seller typed, whatever words arrive with them.
+        if self.upstream_status in (401, 403):
+            return True
         text = str(self).lower()
         return any(p in text for p in self._PLATFORM_FAULT)
 

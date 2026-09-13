@@ -352,9 +352,33 @@ def test_a_platform_outage_shows_up_on_health(app_client, seller_with_store, mon
     "Route is not enabled on this account.",
     "The api key/secret provided is invalid: authentication failed",
     "This feature is not available for your account",
+    # Razorpay's answer when our key may not call the onboarding API at all.
+    # Shown raw, it reads as a verdict on the seller's bank details.
+    "This route is for merchant only",
+    "Access denied: partner account required",
 ])
 def test_platform_level_failures_are_recognised(message):
     assert route_service.RouteError(message, upstream_status=400).is_platform_fault
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_a_refusal_of_our_own_key_is_never_the_sellers(status):
+    """Razorpay's wording changes; the status does not. Being told our key may
+    not do this says nothing about what the seller typed."""
+    e = route_service.RouteError("Some wording we have never seen", upstream_status=status)
+    assert e.is_platform_fault
+    assert not e.is_sellers_to_fix
+
+
+def test_merchant_only_refusal_saves_the_details_instead_of_erroring(
+        seller_without_payouts, monkeypatch):
+    def _refuse(payload, existing_account_id=None):
+        raise route_service.RouteError("This route is for merchant only", upstream_status=400)
+
+    monkeypatch.setattr(route_service, "create_linked_account", _refuse)
+    r = _onboard(seller_without_payouts)
+    assert r.status_code == 200, r.text
+    assert r.json()["pending"] is True, "the seller is done; the account connects once Route is on"
 
 
 @pytest.mark.parametrize("message", [
