@@ -24,6 +24,9 @@ def _get_clean_brevo_key() -> str:
 
 EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", "Stall Wise")
 EMAIL_FROM_ADDRESS = os.environ.get("EMAIL_FROM_ADDRESS", "dassantana135@gmail.com").strip()
+# Where a buyer or seller writes when something is wrong. In the footer of
+# every email, so nobody has to hunt for it on the site.
+SUPPORT_EMAIL = os.environ.get("SUPPORT_EMAIL", "help@stallwise.in").strip()
 
 
 async def send_email(*, to: str, subject: str, html: str, recipient_name: str = "User") -> str | None:
@@ -73,7 +76,9 @@ def _wrap(inner: str) -> str:
         f'<tr><td>{inner}'
         f'<hr style="border:none;border-top:1px solid #E5E5E7;margin:28px 0 16px 0;" />'
         f'<p style="font-size:12px;color:#86868B;margin:0;line-height:1.5;">Sent by {escape(EMAIL_FROM_NAME)}. '
-        f'We never ask for your password or financial credentials by email.</p></td></tr></table>'
+        f'We never ask for your password or financial credentials by email.<br />'
+        f'Need help? Write to <a href="mailto:{escape(SUPPORT_EMAIL)}" style="color:#FF4F00;">{escape(SUPPORT_EMAIL)}</a>.'
+        f'</p></td></tr></table>'
         f'</td></tr></table>'
     )
 

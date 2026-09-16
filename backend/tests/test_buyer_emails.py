@@ -234,3 +234,23 @@ def test_the_sellers_link_goes_to_the_console(seller_with_store, app_client, out
     assert any("/orders/" in u for u in only_link(html, "/orders/"))
     # And the seller's own link must not leak the buyer's email into a URL.
     assert "email=" not in html
+
+
+def test_every_email_carries_the_help_address(seller_with_store, app_client, outbox):
+    """Someone whose order went wrong shouldn't have to hunt the site for a way
+    to reach us — the address rides in the footer of everything we send."""
+    product = make_product(seller_with_store, price=500, paymentMethods=["cod"])
+    place_order(app_client, seller_with_store.store_slug,
+                [{"productId": product["product_id"], "quantity": 1}],
+                payment_method="cod", buyer={"email": "lost@example.com"})
+    drain(app_client)
+
+    assert outbox, "nothing was sent at all"
+    for message in outbox:
+        assert "mailto:help@stallwise.in" in message["html"], message["subject"]
+
+
+def test_the_footer_every_template_shares_carries_it_too():
+    """_wrap() is the one footer all of them pass through, so a new template
+    cannot be written without it."""
+    assert "mailto:help@stallwise.in" in email_service._wrap("<p>hello</p>")

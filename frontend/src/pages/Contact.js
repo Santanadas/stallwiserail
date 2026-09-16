@@ -1,4 +1,5 @@
 import StaticPage from "@/components/StaticPage";
+import { SUPPORT_EMAIL } from "@/lib/site";
 import { useDocumentMeta } from "@/lib/useDocumentMeta";
 
 const H2 = ({ children }) => <h2 className="mk-head text-lg font-extrabold tracking-tight text-[#0A0A0A] md:text-lg">{children}</h2>;
@@ -15,8 +16,8 @@ export default function Contact() {
       <section>
         <H2>Email</H2>
         <p className="mt-2">
-          <a href="mailto:bongsharnipan123@gmail.com" data-testid="contact-email-link" className="font-semibold text-[#FF4F00] underline">
-            bongsharnipan123@gmail.com
+          <a href={`mailto:${SUPPORT_EMAIL}`} data-testid="contact-email-link" className="font-semibold text-[#FF4F00] underline">
+            {SUPPORT_EMAIL}
           </a>
         </p>
       </section>

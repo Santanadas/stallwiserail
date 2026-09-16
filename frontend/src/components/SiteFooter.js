@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { SUPPORT_EMAIL } from "@/lib/site";
 
 const LINKS = [
   { to: "/shops", label: "Browse shops" },
@@ -36,6 +37,13 @@ export default function SiteFooter() {
                 {l.label}
               </Link>
             ))}
+            <a
+              href={`mailto:${SUPPORT_EMAIL}`}
+              data-testid="footer-help-email"
+              className="text-sm text-neutral-300 transition-colors hover:text-[#FF4F00]"
+            >
+              {SUPPORT_EMAIL}
+            </a>
           </nav>
           <p className="text-sm text-neutral-500">© {new Date().getFullYear()} Stall Wise. All rights reserved.</p>
         </div>
