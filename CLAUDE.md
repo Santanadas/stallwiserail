@@ -231,6 +231,15 @@ SPA fallback are on the root app. Supporting modules:
   is what stops a case-only copy of someone's handle. The onboarding field
   lowercases as you type via `slugifyTyping`, which keeps a trailing hyphen —
   `slugify` strips it, and running that per keystroke made hyphens untypeable.
+- **`razorpaySignupDone` is a reminder, not a payment route.** The onboarding
+  "Connect payments" step sends sellers to the Razorpay partner referral link
+  (`RAZORPAY_SIGNUP_URL` in `frontend/src/lib/site.js`) and this flag records that
+  they said they signed up. It is self-declared and unverifiable — the account is
+  the seller's own and no checkout reads it. Whether a shop can actually take an
+  online payment is `_payouts_live()` on the linked account, nothing else. Do not
+  rename this to `razorpayConnected`: that name meant "we hold this seller's
+  gateway keys" for a feature that was deleted because no checkout read it, and a
+  test in `test_payouts.py` keeps it from coming back.
 - **Stock is taken at checkout and must be given back.** Nothing released it until
   `release_abandoned_checkouts()` existed, so every closed payment window permanently
   removed a unit from the shop. A late payment re-reserves rather than losing the sale.

@@ -7,6 +7,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Field, Btn, Note } from "@/components/Kit";
 import ImageUpload from "@/components/ImageUpload";
 import { useDocumentMeta } from "@/lib/useDocumentMeta";
+import { RAZORPAY_SIGNUP_URL } from "@/lib/site";
 
 const slugify = (s) =>
   s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -17,7 +18,7 @@ const slugify = (s) =>
 // arrived, so "studio-craft" could not be typed. slugify() finishes it off.
 const slugifyTyping = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+/, "");
 
-const STEPS = ["Welcome", "Store Name", "Profile Photo"];
+const STEPS = ["Welcome", "Store Name", "Profile Photo", "Payments"];
 
 function Progress({ step }) {
   return (
@@ -56,6 +57,7 @@ export default function Onboarding() {
   const [checkingSlug, setCheckingSlug] = useState(false);
   const [slugStatus, setSlugStatus] = useState(null); // null | 'available' | 'taken' | 'invalid'
   const [busy, setBusy] = useState(false);
+  const [sawRazorpay, setSawRazorpay] = useState(false);
 
   // Profile photo
   const [avatar, setAvatar] = useState(null);
@@ -191,6 +193,19 @@ export default function Onboarding() {
       navigate("/dashboard", { replace: true });
     }
   }, [checkAuth, navigate]);
+
+  // Razorpay accounts are the seller's own, so nothing here can verify one.
+  // This records what they told us; the dashboard banner goes on the same flag.
+  const markConnected = useCallback(async () => {
+    setBusy(true);
+    try {
+      await api.put("/stores/me", { razorpaySignupDone: true });
+    } catch {
+      // Their shop is already made; a failure here must not trap them in
+      // onboarding. The dashboard banner will still be there to try again.
+    }
+    await finish();
+  }, [finish]);
 
   if (!ready) {
     return (
@@ -462,6 +477,75 @@ export default function Onboarding() {
           )}
 
           {/* SCREEN 3: Store Profile Picture (PFP) */}
+          {step === 3 && (
+            <motion.div
+              key="payments-screen"
+              variants={screenVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              data-testid="onboarding-payments"
+            >
+              <div className="border-2 border-[#0A0A0A] bg-white p-6 shadow-[8px_8px_0px_0px_rgba(10,10,10,1)] sm:p-8">
+                <div className="mb-2 inline-flex items-center gap-2 border border-[#0A0A0A] bg-[#FFF4E0] px-2.5 py-1 text-xs font-black uppercase tracking-wider text-[#FF4F00]">
+                  Step 3 of 3
+                </div>
+                <h1 className="mk-head text-3xl font-black tracking-tighter sm:text-4xl">
+                  Connect payments
+                </h1>
+                <p className="mt-2 text-sm leading-relaxed text-[#525252]">
+                  Stall Wise uses Razorpay to process payments securely. Set up your account to
+                  start accepting orders.
+                </p>
+
+                <a
+                  href={RAZORPAY_SIGNUP_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  data-testid="onboarding-razorpay-cta"
+                  onClick={() => setSawRazorpay(true)}
+                  className="mt-6 inline-flex min-h-[52px] w-full items-center justify-center gap-2 border-2 border-[#0A0A0A] bg-[#FF4F00] px-6 py-3.5 text-sm font-bold text-white transition-transform hover:-translate-y-0.5 hover:shadow-[5px_5px_0px_0px_rgba(10,10,10,1)]"
+                >
+                  Set up Razorpay <ArrowRight className="h-4 w-4" />
+                </a>
+
+                <p className="mt-4 border-2 border-[#0A0A0A] bg-[#FFF4E0] p-3.5 text-xs leading-relaxed text-[#525252]">
+                  It opens in a new tab and takes a few minutes. Your shop works on cash on
+                  delivery straight away — you can finish this whenever you like.
+                </p>
+
+                <div className="mt-6 flex flex-col gap-3 border-t-2 border-neutral-100 pt-6 sm:flex-row sm:items-center sm:justify-between">
+                  <button
+                    type="button"
+                    onClick={finish}
+                    data-testid="onboarding-payments-skip"
+                    className="order-2 text-center text-xs font-bold uppercase tracking-wider text-neutral-600 underline transition-colors hover:text-[#FF4F00] sm:order-1"
+                  >
+                    Skip for now
+                  </button>
+
+                  <Btn
+                    variant="primary"
+                    data-testid="onboarding-payments-done"
+                    onClick={markConnected}
+                    disabled={busy}
+                    className="order-1 sm:order-2"
+                  >
+                    {busy ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" /> Finishing...
+                      </>
+                    ) : (
+                      <>
+                        {sawRazorpay ? "I've signed up" : "Already have Razorpay"} <Check className="h-4 w-4" />
+                      </>
+                    )}
+                  </Btn>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
           {step === 2 && (
             <motion.div
               key="photo-screen"
@@ -473,7 +557,7 @@ export default function Onboarding() {
             >
               <div className="border-2 border-[#0A0A0A] bg-white p-6 shadow-[8px_8px_0px_0px_rgba(10,10,10,1)] sm:p-8">
                 <div className="mb-2 inline-flex items-center gap-2 border border-[#0A0A0A] bg-[#FFF4E0] px-2.5 py-1 text-xs font-black uppercase tracking-wider text-[#FF4F00]">
-                  Step 2 of 2
+                  Step 2 of 3
                 </div>
                 <h1 className="mk-head text-3xl font-black tracking-tighter sm:text-4xl">
                   Add your store profile photo
@@ -515,7 +599,7 @@ export default function Onboarding() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-t-2 border-neutral-100 pt-6">
                   <button
                     type="button"
-                    onClick={finish}
+                    onClick={() => setStep(3)}
                     data-testid="onboarding-photo-skip"
                     className="order-2 text-center text-xs font-bold uppercase tracking-wider text-neutral-600 underline transition-colors hover:text-[#FF4F00] sm:order-1"
                   >
@@ -525,7 +609,7 @@ export default function Onboarding() {
                   <Btn
                     variant="primary"
                     data-testid="onboarding-photo-next"
-                    onClick={finish}
+                    onClick={() => setStep(3)}
                     disabled={busy}
                     className="order-1 sm:order-2"
                   >
@@ -535,7 +619,7 @@ export default function Onboarding() {
                       </>
                     ) : (
                       <>
-                        Go to My Store Profile <Sparkles className="h-4 w-4" />
+                        Next: payments <ArrowRight className="h-4 w-4" />
                       </>
                     )}
                   </Btn>

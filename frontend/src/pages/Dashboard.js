@@ -1748,7 +1748,7 @@ export default function Dashboard() {
       action={addProductBtn}
     >
       {activeTab === "home" && (
-        <HomeSection summary={summary} loading={summaryLoading} error={summaryError} onRetry={loadSummary} orders={orders} onNav={setActiveTab} store={store} />
+        <HomeSection summary={summary} loading={summaryLoading} error={summaryError} onRetry={loadSummary} orders={orders} onNav={setActiveTab} store={store} onStoreChange={loadStore} />
       )}
 
       {activeTab === "products" && (

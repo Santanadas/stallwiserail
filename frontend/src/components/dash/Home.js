@@ -1,7 +1,10 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Truck, KeyRound, AlertTriangle, Check, Landmark, ArrowRight } from "lucide-react";
 import { StatusPill } from "@/components/Kit";
 import { Card, Stat, Sparkline, BarList, Skeleton, inr } from "./Pieces";
+import api from "@/lib/api";
+import { RAZORPAY_SIGNUP_URL } from "@/lib/site";
 
 /**
  * Home answers "what do I have to do?" before "how am I doing?".
@@ -40,13 +43,80 @@ function Task({ tone, icon: Icon, tag, headline, note, cta, onClick }) {
   );
 }
 
+/**
+ * Razorpay isn't set up on this shop.
+ *
+ * Two situations, because "your shop is live and nobody can pay" is a
+ * different kind of urgent from "there's a step left". It goes at the very
+ * top, above the queue, and disappears by itself once the flag is set —
+ * nothing here can verify the seller's Razorpay account, so the flag is
+ * whatever they told us.
+ */
+function PaymentsBanner({ live, onConnected }) {
+  const [saving, setSaving] = useState(false);
+
+  const markDone = async () => {
+    setSaving(true);
+    try {
+      await api.put("/stores/me", { razorpaySignupDone: true });
+      await onConnected?.();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      data-testid="payments-banner"
+      className="flex flex-col gap-3 rounded-2xl border border-[#FFD9C2] bg-[#FFF7ED] p-4 sm:flex-row sm:items-center sm:justify-between"
+    >
+      <div className="flex items-start gap-3">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#FFE3CC]">
+          <AlertTriangle className="h-4 w-4 text-[#FF4F00]" />
+        </span>
+        <div>
+          <p className="text-sm font-bold text-[#8A2200]">
+            {live
+              ? "Your shop is live, but buyers can't check out yet."
+              : "Payments not set up — connect Razorpay to start accepting orders on your shop."}
+          </p>
+          <p className="mt-0.5 text-xs font-medium text-neutral-600">
+            Stall Wise uses Razorpay to process payments securely. Cash on delivery keeps working
+            while you finish this.
+          </p>
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-3 self-end sm:self-auto">
+        <button
+          type="button"
+          onClick={markDone}
+          disabled={saving}
+          data-testid="payments-banner-done"
+          className="text-xs font-bold text-neutral-500 underline transition-colors hover:text-[#FF4F00] disabled:opacity-50"
+        >
+          {saving ? "Saving…" : "Already done"}
+        </button>
+        <a
+          href={RAZORPAY_SIGNUP_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          data-testid="payments-banner-cta"
+          className="inline-flex items-center gap-1.5 rounded-xl bg-[#FF4F00] px-4 py-2.5 text-xs font-bold text-white transition-colors hover:bg-[#E04500]"
+        >
+          {live ? "Connect Razorpay" : "Set up now"} <ArrowRight className="h-3.5 w-3.5" />
+        </a>
+      </div>
+    </div>
+  );
+}
+
 function daysAgo(iso) {
   if (!iso) return null;
   const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
   return d <= 0 ? "today" : d === 1 ? "1 day" : `${d} days`;
 }
 
-export default function HomeSection({ summary, loading, error, onRetry, orders, onNav, store }) {
+export default function HomeSection({ summary, loading, error, onRetry, orders, onNav, store, onStoreChange }) {
   if (!loading && !summary) {
     // A failed request must not masquerade as a shop with nothing in it.
     return (
@@ -180,6 +250,10 @@ export default function HomeSection({ summary, loading, error, onRetry, orders, 
 
   return (
     <div className="flex flex-col gap-5">
+      {store && store.razorpaySignupDone === false && (
+        <PaymentsBanner live={(summary.counts?.liveProducts || 0) > 0} onConnected={onStoreChange} />
+      )}
+
       {/* ---- Needs you today ---- */}
       <section>
         <div className="mb-2.5 flex items-baseline justify-between gap-3">

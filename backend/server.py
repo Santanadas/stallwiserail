@@ -152,6 +152,13 @@ class StoreUpdateIn(BaseModel):
     dispatchDays: Optional[int] = Field(default=None, ge=0, le=60)
     gstin: Optional[str] = Field(default=None, max_length=20)
     hsnCode: Optional[str] = Field(default=None, max_length=12)
+    # The seller telling us they have signed up for Razorpay. Self-declared:
+    # the account is theirs, and nothing here can check it. Deliberately NOT
+    # called "razorpayConnected" — that name lived here once meaning "we hold
+    # this seller's gateway keys", which no checkout ever read. A name that
+    # sounds like "this shop can take card payments" has to be earned by a
+    # linked payout account, not by a seller ticking a box.
+    razorpaySignupDone: Optional[bool] = None
     notifyNewOrder: Optional[bool] = None
     notifyDailySummary: Optional[bool] = None
     notifyWeeklyDigest: Optional[bool] = None
@@ -350,6 +357,7 @@ def public_store(s: Optional[dict]) -> Optional[dict]:
         "dispatchDays": (s.get("dispatch_days") if s.get("dispatch_days") is not None else 2),
         "gstin": s.get("gstin") or "",
         "hsnCode": s.get("hsn_code") or "",
+        "razorpaySignupDone": bool(s.get("razorpay_signup_done") or False),
         "notifyNewOrder": bool(s.get("notify_new_order", True)),
         "notifyDailySummary": bool(s.get("notify_daily_summary", False)),
         "notifyWeeklyDigest": bool(s.get("notify_weekly_digest", False)),
@@ -835,6 +843,7 @@ async def update_store(body: StoreUpdateIn, user=Depends(get_current_user)):
         ("dispatchDays", "dispatch_days", int),
         ("gstin", "gstin", lambda v: security.sanitize_text(v, 20).upper()),
         ("hsnCode", "hsn_code", lambda v: security.sanitize_text(v, 12)),
+        ("razorpaySignupDone", "razorpay_signup_done", bool),
         ("notifyNewOrder", "notify_new_order", bool),
         ("notifyDailySummary", "notify_daily_summary", bool),
         ("notifyWeeklyDigest", "notify_weekly_digest", bool),

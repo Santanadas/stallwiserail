@@ -101,3 +101,27 @@ def test_shop_directory_excludes_empty_shops(app_client, make_seller):
     slugs = [s["slug"] for s in app_client.get("/api/shops").json()["shops"]]
     assert "stocked-shop" in slugs
     assert "empty-shop" not in slugs
+
+
+def test_razorpay_connected_starts_false_and_the_seller_can_say_they_did_it(make_seller):
+    """Self-declared on purpose: the Razorpay account is the seller's own and
+    nothing here can check it. It drives the dashboard banner, not payouts."""
+    s = make_seller()
+    slug = f"shop-{uuid.uuid4().hex[:8]}"
+    assert s.post("/api/stores", json={"name": "Chai Corner", "slug": slug}).status_code == 200
+    assert s.get("/api/stores/me").json()["razorpaySignupDone"] is False
+
+    assert s.put("/api/stores/me", json={"razorpaySignupDone": True}).status_code == 200
+    assert s.get("/api/stores/me").json()["razorpaySignupDone"] is True
+
+
+def test_saying_yes_to_razorpay_does_not_switch_online_payments_on(make_seller):
+    """The flag is a reminder, not a payout account — only a linked account
+    lets a shop take an online payment."""
+    s = make_seller()
+    slug = f"shop-{uuid.uuid4().hex[:8]}"
+    s.post("/api/stores", json={"name": "Chai Corner", "slug": slug})
+    s.put("/api/stores/me", json={"razorpaySignupDone": True})
+
+    shop = s.get(f"/api/shop/{slug}").json()
+    assert shop["acceptsOnline"] is False
