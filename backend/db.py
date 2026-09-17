@@ -619,6 +619,21 @@ def _get_sqlite_conn() -> sqlite3.Connection:
     return _sqlite_conn
 
 
+async def healthy() -> bool:
+    """Can we actually read from the database right now?
+
+    /health used to report `bool(_pool)`, which says "is this Postgres", not
+    "does the database work" — on the SQLite path it read `"db": false` beside a
+    database serving every request.
+    """
+    try:
+        await fetch_val("SELECT 1")
+        return True
+    except Exception as e:
+        logger.warning(f"health check query failed: {e}")
+        return False
+
+
 def encode_args(args: tuple) -> tuple:
     """JSON-encode dict/list parameters.
 

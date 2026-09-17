@@ -89,6 +89,25 @@ def test_health_reports_no_storage_warning_on_a_normal_boot(app_client):
     assert body["engine"] in ("sqlite", "postgres")
 
 
+def test_health_says_the_database_works_on_either_engine(app_client):
+    """`db` used to be bool(_pool) — "is this Postgres", not "does it work" —
+    so a healthy SQLite deployment reported `"db": false` and read as an
+    outage."""
+    body = app_client.get("/health").json()
+    assert body["db"] is True
+
+
+def test_health_says_so_when_the_database_cannot_be_read(app_client, monkeypatch):
+    """Breaking the query itself, so this covers db.healthy() rather than a
+    stub standing in for it."""
+    async def boom(*a, **k):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(db, "fetch_val", boom)
+    body = app_client.get("/health").json()
+    assert body["db"] is False
+
+
 def test_health_reports_degraded_storage(app_client, monkeypatch):
     monkeypatch.setattr(db, "ephemeral_storage_warning", lambda: "Data will be LOST.")
     body = app_client.get("/health").json()
