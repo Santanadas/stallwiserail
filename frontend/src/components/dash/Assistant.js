@@ -6,7 +6,7 @@ import { assistantEnabled } from "@/lib/aiDescription";
 import { inr } from "./Pieces";
 
 /**
- * The shop assistant.
+ * Nero, the shop assistant.
  *
  * It answers from the seller's own data and can propose changes — but a
  * proposal is inert until the seller presses Apply, and Apply posts to a
@@ -167,7 +167,7 @@ export default function Assistant({ onApplied }) {
       }]);
     } catch (e) {
       if (e?.name !== "AbortError") {
-        setError(e?.message || formatApiError(e) || "The assistant couldn't be reached.");
+        setError(e?.message || formatApiError(e) || "Nero couldn't be reached.");
       }
     } finally {
       abortRef.current = null;
@@ -228,7 +228,7 @@ export default function Assistant({ onApplied }) {
           />
           <aside
             role="dialog"
-            aria-label="Shop assistant"
+            aria-label="Nero, your shop assistant"
             className="fixed inset-x-0 bottom-0 top-16 z-40 flex flex-col border-neutral-200 bg-white sm:inset-y-0 sm:left-auto sm:right-0 sm:w-[420px] sm:border-l sm:shadow-2xl"
           >
             <header className="flex items-center justify-between gap-3 border-b border-neutral-200 px-4 py-3">
@@ -237,7 +237,7 @@ export default function Assistant({ onApplied }) {
                   <Sparkles className="h-4 w-4 text-[#FF7A3D]" />
                 </div>
                 <div>
-                  <div className="mk-head text-sm font-black tracking-tight text-[#0A0A0A]">Shop assistant</div>
+                  <div className="mk-head text-sm font-black tracking-tight text-[#0A0A0A]">Nero</div>
                   <div className="text-[11px] font-medium text-neutral-400">Reads your shop. Asks before changing it.</div>
                 </div>
               </div>
@@ -255,7 +255,7 @@ export default function Assistant({ onApplied }) {
               {turns.length === 0 && (
                 <div className="flex flex-col gap-2">
                   <p className="text-[13px] font-medium leading-relaxed text-neutral-500">
-                    Ask about your orders, stock or sales — or tell it what to change and confirm before it happens.
+                    Ask Nero about your orders, stock or sales — or say what to change, and confirm before it happens.
                   </p>
                   {STARTERS.map((s) => (
                     <button

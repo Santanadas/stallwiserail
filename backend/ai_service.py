@@ -59,11 +59,10 @@ class AIUnavailable(RuntimeError):
     """Raised when the feature is switched off or the upstream call fails."""
 
 
-# Off unless switched on. A key sitting in the environment is not consent to
-# spend money on it, and an AI feature that stalls is worse than no AI feature
-# — the seller cannot tell a slow model from a broken site. Set AI_ENABLED=true
-# to bring the description writer back.
-FEATURES_ON = _env("AI_ENABLED").lower() in ("1", "true", "yes")
+# On by default, at the owner's request. It still needs a key: with none, this
+# stays dark and the UI hides the buttons rather than offering something that
+# cannot answer. Set AI_ENABLED=false to switch it off without removing the key.
+FEATURES_ON = _env("AI_ENABLED", "true").lower() not in ("0", "false", "no")
 
 
 def enabled() -> bool:

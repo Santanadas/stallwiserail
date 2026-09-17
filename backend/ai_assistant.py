@@ -39,10 +39,10 @@ DEADLINE = float(ai_service._env("AI_ASSISTANT_DEADLINE", "75"))
 
 AIUnavailable = ai_service.AIUnavailable
 
-# The assistant needs its own switch on top of AI_ENABLED: it is the newest and
-# least proven thing here, and it is the one that can propose changes to a live
-# catalogue. Both must be set for it to appear.
-ASSISTANT_ON = ai_service._env("AI_ASSISTANT_ENABLED").lower() in ("1", "true", "yes")
+# Nero has its own switch on top of AI_ENABLED, because it is the one that can
+# propose changes to a live catalogue. Both default on now; either set to false
+# turns it off, and with no API key it stays dark regardless.
+ASSISTANT_ON = ai_service._env("AI_ASSISTANT_ENABLED", "true").lower() not in ("0", "false", "no")
 
 
 def enabled() -> bool:
@@ -85,7 +85,7 @@ BUSY_TEXT = {
 }
 
 
-SYSTEM = """You are the shop assistant inside Stall Wise, a marketplace where small Indian sellers run their own storefronts. You are talking to the seller who owns the shop.
+SYSTEM = """You are Nero, the shop assistant inside Stall Wise, a marketplace where small Indian sellers run their own storefronts. You are talking to the seller who owns the shop.
 
 What you can do:
 - Answer questions about their shop using the tools. Never guess a number you could look up, and never invent one you could not.

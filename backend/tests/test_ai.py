@@ -44,7 +44,19 @@ def test_status_reports_disabled_without_an_api_key(seller_with_store):
 
 
 def test_status_reports_enabled_when_configured(seller_with_store, monkeypatch):
+    """Both switches default on, so a working key lights up the writer and Nero."""
     monkeypatch.setattr(ai_service, "enabled", lambda: True)
+    assert seller_with_store.get("/api/ai/status").json() == {
+        "enabled": True, "assistant": True}
+
+
+def test_nero_can_be_switched_off_on_its_own(seller_with_store, monkeypatch):
+    """AI_ASSISTANT_ENABLED=false silences the one thing that can propose
+    changes to a live catalogue, while product descriptions keep working."""
+    import ai_assistant
+
+    monkeypatch.setattr(ai_service, "enabled", lambda: True)
+    monkeypatch.setattr(ai_assistant, "ASSISTANT_ON", False)
     assert seller_with_store.get("/api/ai/status").json() == {
         "enabled": True, "assistant": False}
 

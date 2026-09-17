@@ -1954,7 +1954,7 @@ async def ai_product_description(body: AIDescribeIn, request: Request,
 
 
 
-# ======================= AI shop assistant =======================
+# ======================= Nero, the shop assistant =======================
 # The model can read this seller's shop and propose changes to it. It cannot
 # write. Every tool below is closed over `user`, so there is no seller id in the
 # model's reach — asking for "seller 42's products" is not a thing it can
@@ -2126,7 +2126,7 @@ async def ai_assistant_chat(body: AssistantIn, request: Request,
                             user=Depends(get_current_user)):
     if not ai_assistant.enabled():
         raise HTTPException(status_code=503,
-                            detail="The shop assistant isn't switched on for this site yet.")
+                            detail="Nero isn't switched on for this site yet.")
     # A turn can fan out into several model calls, so it is the priciest thing a
     # seller can trigger. Per seller, not per IP.
     if not security.check_rate_limit(f"ai_chat:{user['user_id']}", max_requests=60, window_seconds=3600):
@@ -2172,7 +2172,7 @@ async def ai_assistant_apply(body: AssistantApplyIn, user=Depends(get_current_us
     """
     if not ai_assistant.enabled():
         raise HTTPException(status_code=503,
-                            detail="The shop assistant isn't switched on for this site yet.")
+                            detail="Nero isn't switched on for this site yet.")
     if not security.check_rate_limit(f"ai_apply:{user['user_id']}", max_requests=120, window_seconds=3600):
         raise HTTPException(status_code=429, detail="Too many changes at once. Try again shortly.")
 
@@ -3060,7 +3060,8 @@ async def health_check():
     out = {
         "status": "ok",
         "service": "stallwise",
-        "db": bool(db._pool),
+        # Whether a database answers, not whether it happens to be Postgres.
+        "db": await db.healthy(),
         "engine": "postgres" if db._pool else "sqlite",
     }
     warning = db.ephemeral_storage_warning()
@@ -3100,7 +3101,10 @@ async def health_check():
 
 @api.api_route("/", methods=["GET", "HEAD"])
 async def root():
-    return {"service": "Stall Wise API", "status": "ok", "engine": "PostgreSQL", "db_connected": bool(db._pool)}
+    # "engine" said PostgreSQL unconditionally, including on the SQLite path.
+    return {"service": "Stall Wise API", "status": "ok",
+            "engine": "postgres" if db._pool else "sqlite",
+            "db_connected": bool(db._pool)}
 
 
 app.include_router(api)

@@ -248,10 +248,13 @@ SPA fallback are on the root app. Supporting modules:
   for both the browser callback and the webhook, compare-and-swapped on `paid_at` so
   only one of them sends the receipt. Buyer links are `/order/<id>?email=...` (public);
   `/orders/<id>` is the seller console and needs a login.
-- **AI is off unless switched on.** `AI_ENABLED` for the description writer,
-  `AI_ASSISTANT_ENABLED` as well for the shop assistant. A key in the environment is
-  not consent. The assistant proposes; it never writes — `/api/ai/assistant/apply`
-  re-checks ownership and bounds server-side.
+- **The AI is Nero, and it needs a key, not just a flag.** `AI_ENABLED` and
+  `AI_ASSISTANT_ENABLED` both default **on** now (set either to `false` to switch it
+  off), but `enabled()` is `FLAG and bool(_API_KEY)` — with no `NVIDIA_API_KEY` /
+  `AI_API_KEY` the endpoints answer 503 and the UI hides the buttons. Nero proposes;
+  it never writes — `/api/ai/assistant/apply` re-checks ownership and bounds
+  server-side. `/health` reports `ai.enabled`, `ai.assistant` and `ai.hasKey`, which
+  is the way to tell from Railway whether the key actually landed.
 - **Global CSS goes in `@layer base`, never bare.** Tailwind v4 puts every utility in
   `@layer utilities`, and unlayered CSS beats all layered CSS regardless of
   specificity. A bare `* { border-color: hsl(var(--border)) }` in `index.css` —
